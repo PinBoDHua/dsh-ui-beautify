@@ -5,6 +5,14 @@
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PinBoDHua/dsh-ui-beautify.git"
+  },
+  "homepage": "https://github.com/PinBoDHua/dsh-ui-beautify#readme",
+  "bugs": {
+    "url": "https://github.com/PinBoDHua/dsh-ui-beautify/issues"
+  },
   "engines": {
     "node": ">=22.6"
   },
@@ -59,6 +67,7 @@
     "src",
     "scripts",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "DESIGN.md"
   ]
 }

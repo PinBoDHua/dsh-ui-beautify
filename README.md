@@ -3,6 +3,8 @@
 给 DeepSeek Harness Web 界面换一套视觉语言的客户端插件：**配色身份、表面层次、
 几何圆角、内容排版**四件事同时收紧，并提供可视化外观设置面板。
 
+仓库：<https://github.com/PinBoDHua/dsh-ui-beautify>
+
 - 走官方唯一支持的扩展点 `ctx.theme.overrideTokens()`，**不劫持组件、不改宿主代码**；
 - 卸载或关闭总开关后界面**零残留**地回到官方原样；
 - 手写客户端 bundle，**不引入任何第三方依赖**，构建脚本零 npm 包；

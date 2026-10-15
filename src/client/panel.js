@@ -11,6 +11,7 @@
 
 import {
   ACCENTS,
+  CORNER_SHAPES,
   PRESETS,
   RADIUS_SCALES,
   accentSwatches,
@@ -258,6 +259,18 @@ export function BeautifyPanel(props) {
           disabled,
           options: RADIUS_SCALES,
           onChange: (id) => update({ radius: id })
+        })
+      ),
+
+      h(
+        Row,
+        { title: t('corner'), hint: t('cornerHint') },
+        h(Segmented, {
+          label: t('corner'),
+          value: state.corner,
+          disabled,
+          options: CORNER_SHAPES,
+          onChange: (id) => update({ corner: id })
         })
       ),
 

@@ -31,15 +31,28 @@ html[data-dshb-typography='on'] body :is(table, code, kbd, samp, pre) {
 }
 
 /* ------------------------------------------------------------------ *
- * 2. 代码
+ * 2. 行内代码：**刻意不加任何东西**
+ *
+ *    v1.0–v1.2 这里有一条 `html body :not(pre) > code { border: 1px solid …;
+ *    border-radius: var(--dsw-radius-xs); padding: 0.1em 0.34em }`，理由写的是
+ *    「官方只给底色，这里补一根极淡描边」。**那句话是错的**，而且规则本身也打不过：
+ *
+ *      · 宿主 `markdown__MarkdownText.module.css` 的
+ *        `.markdown :not(pre) > code` 已经写着
+ *        `border: 0.5px solid var(--dsw-alias-border-l1)`、
+ *        `border-radius: var(--dsw-radius-sm)`、`padding: 0 5px`
+ *        —— 描边、圆角、内边距官方全都给了；
+ *      · 那条规则座标 (0,1,2)，而插件的 `html body :not(pre) > code` 是 (0,0,4)：
+ *        **类级 1 > 0，宿主赢**。行内代码在实际出现的唯一位置（Markdown 正文里）
+ *        拿到的一直是宿主的值，插件声明的三个属性一个都没生效；
+ *      · 它还是整个文件里唯一没有 `data-dshb-typography` 前缀的规则 ——
+ *        于是「内容精修」关掉之后，它仍然在 markdown **之外** 的 `<code>` 上生效。
+ *
+ *    修法是删掉整条，而不是加 `!important` 或提特异性去赢一个本来就正确的官方样式 ——
+ *    与 v1.1 删掉 `<pre>` 那条边框规则是同一个判断：**样式表再叠一层，收益是零，
+ *    代价是打一架**。行内代码的外观由令牌决定（`--dsw-alias-markdown-inline-code`、
+ *    `--dsw-radius-sm`），它们本来就随预设走。
  * ------------------------------------------------------------------ */
-
-/* 行内代码：官方只给底色，这里补一根极淡描边，让它从正文里「浮」起来 */
-html body :not(pre) > code {
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-xs);
-  padding: 0.1em 0.34em;
-}
 
 /* 代码块：**刻意不动 `<pre>`**。
  *

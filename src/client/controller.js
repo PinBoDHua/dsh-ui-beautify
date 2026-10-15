@@ -12,7 +12,7 @@
  *      整套移除，界面回到官方原样，做到「零残留」。
  */
 
-import { ACCENTS, PRESETS, RADIUS_SCALES, buildTokens } from './presets.js'
+import { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, buildTokens } from './presets.js'
 import { DEFAULT_STATE, loadState, normalizeState, saveState } from './state.js'
 import { STYLES } from './styles.generated.js'
 
@@ -23,7 +23,8 @@ const SOURCE = 'dsh-ui-beautify'
 const KNOWN = {
   preset: PRESETS.map((p) => p.id),
   accent: ACCENTS.map((a) => a.id),
-  radius: RADIUS_SCALES.map((r) => r.id)
+  radius: RADIUS_SCALES.map((r) => r.id),
+  corner: CORNER_SHAPES.map((c) => c.id)
 }
 
 /**
@@ -47,7 +48,8 @@ const FLAGS = {
  */
 const SELECTORS = {
   preset: 'data-dshb-preset',
-  radius: 'data-dshb-radius'
+  radius: 'data-dshb-radius',
+  corner: 'data-dshb-corner'
 }
 
 /**
@@ -75,9 +77,31 @@ export function createController(options) {
    * 用户交互照常有过渡。
    */
   let motionReady = false
+  /**
+   * 是否已经卸载。
+   *
+   * 卸载之后**一切投射都要停**，这不是防御性编程，而是一条真实存在的路径：
+   * 首帧那次 `requestAnimationFrame` 排在队列里，HMR 在同一个 tick 内卸载并重载
+   * （dsh-client-hmr 每 500ms 轮询一次），或者窗口不可见时 rAF 被无限期推迟 ——
+   * 回调随后执行，会把 7 个 `data-dshb-*` 属性重新写到 `<html>` 上，
+   * 而那些属性是插件对外的公开接口，**没有任何东西会再清掉它们**。
+   */
+  let disposed = false
+  /** 首帧回调的句柄，卸载时用它取消排队中的那一帧。 */
+  let rafHandle = null
+  /**
+   * 宿主令牌层的撤回函数。
+   *
+   * `theme.overrideTokens(source, tokens)` 的返回值是**唯一**的撤回入口：
+   * 宿主只把层存进内部表，不会在插件卸载时替我们删。v1.2 丢弃了这个返回值，
+   * 于是 README 承诺的「卸载零残留」只做到了样式标签与属性那一半 ——
+   * 配色令牌会一直留在宿主的主题服务里，直到进程结束。
+   */
+  let tokenDisposer = null
 
   /** 通知所有订阅者。面板以整对象替换触发重渲染。 */
   function emit() {
+    if (disposed) return
     const snapshot = { ...state }
     for (const listener of listeners) {
       try {
@@ -90,6 +114,7 @@ export function createController(options) {
 
   /** 把状态投射到 <html> 属性上；总开关关闭时清空全部属性。 */
   function projectAttributes() {
+    if (disposed) return
     if (!doc?.documentElement) return
     const root = doc.documentElement
     for (const [key, attribute] of Object.entries(FLAGS)) {
@@ -126,16 +151,26 @@ export function createController(options) {
   }
 
   /**
-   * 把外观推给宿主。令牌层永远保持存在（哪怕空对象）而不是反复增删，
-   * 这样「关闭 → 打开」不会在宿主侧留下需要跟踪的悬挂 disposer。
+   * 把外观推给宿主。
+   *
+   * 令牌层在**开关关闭**时推空对象而不是撤回整层：这样「关闭 → 打开」不会在宿主侧
+   * 留下需要跟踪的悬挂 disposer，界面照样回到官方原样。
+   * 但**卸载**是另一回事 —— 那时必须真的把层删掉，见 mount() 的 disposer，
+   * 因此这里要把宿主返回的撤回函数记下来。
    */
   function projectTokens() {
+    if (disposed) return
     if (!theme || typeof theme.overrideTokens !== 'function') return
-    theme.overrideTokens(SOURCE, state.enabled ? buildTokens(state) : {})
+    const disposer = theme.overrideTokens(
+      SOURCE,
+      state.enabled ? buildTokens(state) : {}
+    )
+    if (typeof disposer === 'function') tokenDisposer = disposer
   }
 
   /** 全量投射一次。 */
   function project() {
+    if (disposed) return
     projectAttributes()
     projectTokens()
     if (state.enabled) mountStyles()
@@ -183,7 +218,8 @@ export function createController(options) {
       // 没有 requestAnimationFrame 的环境（例如无头测试替身）直接视为就绪。
       const raf = globalThis.requestAnimationFrame
       if (typeof raf === 'function') {
-        raf(() => {
+        rafHandle = raf(() => {
+          rafHandle = null
           motionReady = true
           projectAttributes()
         })
@@ -192,7 +228,32 @@ export function createController(options) {
         projectAttributes()
       }
       return () => {
+        // 顺序有意如此：先立起 disposed，让任何**已经排队**的回调变成空操作，
+        // 再取消还没执行的那一帧，最后才回收三条落点。
+        disposed = true
+        if (rafHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+          globalThis.cancelAnimationFrame(rafHandle)
+        }
+        rafHandle = null
+        listeners.clear()
         unmountStyles()
+        // 令牌层：优先用它自己的 disposer 撤回（宿主唯一的删除入口）；
+        // 宿主若没返回函数（契约允许），退而推一个空层 —— 两条路都能让
+        // 界面回到官方原样，而不是把配色留在宿主的主题服务里。
+        if (typeof tokenDisposer === 'function') {
+          try {
+            tokenDisposer()
+          } catch {
+            /* 宿主可能已经先一步回收了这一层 */
+          }
+          tokenDisposer = null
+        } else if (theme && typeof theme.overrideTokens === 'function') {
+          try {
+            theme.overrideTokens(SOURCE, {})
+          } catch {
+            /* 卸载路径上的异常不应中断属性清理 */
+          }
+        }
         if (doc?.documentElement) {
           for (const attribute of [
             ...Object.values(FLAGS),

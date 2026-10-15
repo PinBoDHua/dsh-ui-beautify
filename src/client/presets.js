@@ -114,6 +114,39 @@ export const RADIUS_SCALES = [
 ]
 
 /**
+ * 圆角**形状**（与圆角半径正交的一条轴）。
+ *
+ * 宿主自带 `theme/corner_shape.css`：
+ *
+ *   @supports (corner-shape: superellipse(1.5)) {
+ *     :root { --dsw-corner-shape: superellipse(1.5) }
+ *     *, :before, :after { corner-shape: var(--dsw-corner-shape) }
+ *   }
+ *
+ * 也就是说官方在支持该属性的浏览器上把**所有**圆角都做成了方圆形
+ * （超椭圆，苹果那种「更饱满」的圆角），并把它交给一个令牌控制 ——
+ * 而 v1.2 从来没有碰过这个令牌。
+ *
+ * 这条轴与半径完全正交：半径决定「切多深」，形状决定「切口是什么曲线」。
+ * 三档里 `squircle` 就是官方的 `superellipse(1.5)`，因此**默认值不改变现有观感**；
+ * 另外两档才是有意的偏离。
+ *
+ * 为什么值得做成一个开关：`corner-shape` 是这两年的新属性，观感差异在
+ * 16–28px 的大圆角上非常明显（卡片、对话框、输入区），而「正圆 / 方圆形」
+ * 是一个真实的审美分歧点 —— 有人认为方圆形更「高级」，有人认为它「不够利落」。
+ * 插件不该替用户选，但应该把它变成一行可选项。
+ *
+ * 圆形按钮与胶囊不受影响：宿主的 StateDot / Pill / Switch / Tag / 滚动条滑块
+ * 都自己写了 `corner-shape: round`，那是刻意的（正圆才像圆），
+ * `scripts/check.mjs` 有一条断言把这件事钉在插件自己的样式表上。
+ */
+export const CORNER_SHAPES = [
+  { id: 'round', name: '正圆', css: 'round' },
+  { id: 'squircle', name: '方圆形', css: 'superellipse(1.5)' },
+  { id: 'crisp', name: '硬朗', css: 'superellipse(2.4)' }
+]
+
+/**
  * 四个预设。
  *
  * `neutral` 是每个预设的「表面与墨色」骨架，明暗各一组；`shadow` 是该预设的
@@ -571,6 +604,16 @@ const TINTS = Object.freeze({
 const TOOLTIP_KEY_MIN = 2
 
 /**
+ * 思考态扫光朝画布退让的比例。
+ *
+ * 官方那一对（正文 / 扫光）的可分辨度是 1.6 上下 —— 它本来就是一道
+ * 「若有若无」的微光，因此这里不能按 3:1 去解，只能复刻那种强度。
+ * 42% 是实测能让 56 组组合都落在 1.5 以上、又不超过 3.0 的取值：
+ * 再小会让扫光与正文糊在一起，再大就成了一道真正的条纹。
+ */
+const THINK_SHIMMER_MIX = 0.42
+
+/**
  * 让一个文字色对**一整组**背景都达标。
  *
  * 文字不总是落在画布上：同一段灰字会出现在画布、卡片、代码块、侧栏上。
@@ -750,6 +793,135 @@ const HOST_SHIKI = Object.freeze({
 })
 
 /**
+ * 宿主 `design_platform.css` 的语义色，逐字节照抄。求解器以此为起点。
+ *
+ * ## 为什么语义色与强调色是两套，而且都不共用
+ * 强调色是**用户的身份色**（品牌、按钮、链接），语义色是**状态的语言**：
+ * 绿 = 成功、琥珀 = 警告、红 = 危险。后者的色相不是审美选择，而是一条被反复
+ * 学习的约定 —— 把「危险」换成紫色，界面就不再可信。
+ *
+ * 因此这里的处理与强调色**正好相反**：
+ *   · 强调色：色相由用户挑，明度由求解器决定（只保证读得出来）；
+ *   · 语义色：色相与饱和度锁死（约定不可动），只沿明度轴移动到读得出来。
+ * 两者都只动明度，但理由不同，`scripts/check.mjs` 也分别断言。
+ *
+ * ## 种子为什么是「宿主的两支」
+ * 宿主的语义色在浅色/深色两套里几乎相同（绿-500 与琥珀-500 两边都用），
+ * 只有危险色的浅色档用了更深的红-600。照抄宿主而不是自选，是为了让
+ * 「插件之前的界面」与「插件之后的界面」在同一套语言里 ——
+ * 用户看到的仍然是那个绿，只是终于读得出来了。
+ */
+const HOST_SEMANTIC = Object.freeze({
+  light: Object.freeze({
+    success: '#22c55e',
+    successSoft: '#4ed17e',
+    warn: '#f59e0b',
+    warnSoft: '#f7ad31',
+    error: '#ec1313',
+    errorSoft: '#f25a5a'
+  }),
+  dark: Object.freeze({
+    success: '#22c55e',
+    successSoft: '#4ed17e',
+    warn: '#f59e0b',
+    warnSoft: '#f7ad31',
+    error: '#f25a5a',
+    errorSoft: '#f25a5a'
+  })
+})
+
+/**
+ * 语义色的淡染比例，取自宿主 `Tag.module.css` 的原始注释：
+ * 「The tint is 10%, except `warning`, which keeps the 12%」。
+ * 这三个语气（success / warning / danger）与 v1.2 已经求解过的 `info` 语气
+ * 是同一张样式表里隔几行的兄弟规则，比例也照抄，唯一的改动是**把颜色解出来**。
+ */
+const SEMANTIC_WASH = Object.freeze({ success: 0.1, warn: 0.12, error: 0.1 })
+
+/** 差异视图的整行淡染比例，取自宿主 `--dsw-static-green-500-a08/a12`。 */
+const DIFF_WASH = Object.freeze({ light: 0.08, dark: 0.12 })
+
+/** 深色下调色板键名 → 语义族成员。 */
+const SEMANTIC_MEMBERS = Object.freeze([
+  ['success', 'successSoft'],
+  ['warn', 'warnSoft'],
+  ['error', 'errorSoft']
+])
+
+const semanticCache = new Map()
+
+/**
+ * 求解一个预设的语义色（四支：成功 / 警告 / 危险，各含一支「柔和档」）。
+ *
+ * ## 约束从哪来
+ * 与强调色同一个套路，但这次的**每一条都有消费者**：
+ *
+ *   1. **当文字**：压在全部表面色与画布上 —— `.failed` 的保存失败提示、
+ *      菜单里的危险项、（柔和档的）shortcuts / plugin-manager 内联样式；
+ *   2. **当文字，压在自己的淡染层上**：Tag 的 success / warning / danger 语气
+ *      （`color-mix(色 10%/12%, transparent)` + `color: 色`），这是一处**自指**约束，
+ *      因此与强调色一样迭代两轮；
+ *   3. **当底色**：`.brokenBadge` 把危险色铺成徽标底，字是 `--dsw-alias-bg-layer-3`
+ *      —— 也就是插件的 surface3。**只有危险色有这条消费者**，所以只有它带这条约束：
+ *      给成功与警告加一条不存在的需求，只会让它们的明度被推着走。
+ *
+ * 轻提示上的那一对**不在**约束里，也解不出来 —— 见 `readability.js` 的 INFEASIBLE。
+ *
+ * @param preset - 预设条目（提供表面色与画布）。
+ * @returns `{ light, dark }`，每侧含 `success/successSoft/warn/warnSoft/error/errorSoft`。
+ */
+function solveSemantic(preset) {
+  const cacheKey = preset.id
+  const hit = semanticCache.get(cacheKey)
+  if (hit !== undefined) return hit
+
+  const out = {}
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    const all = [...surfaces, neutral.canvas]
+    const seeds = HOST_SEMANTIC[mode]
+    const result = {}
+
+    for (const [base, soft] of SEMANTIC_MEMBERS) {
+      const wash = SEMANTIC_WASH[base]
+      let color = seeds[base]
+      for (let pass = 0; pass < 2; pass += 1) {
+        const layers = all.map((surface) => tint(surface, color, wash))
+        const requirements = [
+          // 1. 当文字：压在全部表面与画布上
+          ...all.map((surface) => ({ against: surface, target: AA })),
+          // 菜单材质是半透明的，落点仍以画布计
+          { against: neutral.menu, target: AA },
+          // 2. 当文字：压在自己的淡染层上（自指，留余量）
+          ...layers.map((layer) => ({ against: layer, target: AA + SELF_REFERENTIAL_MARGIN }))
+        ]
+        // 3. 当底色：只有危险色有这条消费者（.brokenBadge）
+        if (base === 'error') {
+          requirements.push({ against: neutral.surface3, target: AA })
+        }
+        const solved = solveColor(color, requirements)
+        if (solved === null) break
+        color = solved
+      }
+      result[base] = color
+      // 柔和档：宿主的 green-400 / amber-400 是「同色相、更低饱和度」的一档，
+      // 它同样被当文字用（shortcuts / plugin-manager），所以也解到 AA。
+      // 一次把全部约束交给求解器 —— 逐个表面反复调用会让前一个表面的结论
+      // 被后一个表面推翻（最后一次调用说了算），那是错的。
+      result[soft] =
+        solveColor(
+          seeds[soft],
+          all.map((surface) => ({ against: surface, target: AA }))
+        ) ?? seeds[soft]
+    }
+    out[mode] = result
+  }
+  semanticCache.set(cacheKey, out)
+  return out
+}
+
+/**
  * 面板色板要显示的颜色 —— **求解后**的取值，而不是配色表里的原始值。
  *
  * 为什么必须求解后再显示：求解会沿明度轴微调强调色（最多约 11%），如果色板画的是
@@ -777,6 +949,7 @@ export function buildTokens(state) {
   const preset = PRESETS.find((p) => p.id === state.preset) ?? PRESETS[0]
   const accentEntry = ACCENTS.find((a) => a.id === state.accent) ?? ACCENTS[0]
   const radius = RADIUS_SCALES.find((r) => r.id === state.radius) ?? RADIUS_SCALES[1]
+  const corner = CORNER_SHAPES.find((c) => c.id === state.corner) ?? CORNER_SHAPES[1]
   const L = preset.neutral.light
   const D = preset.neutral.dark
   const SL = preset.shadow.light
@@ -787,32 +960,81 @@ export function buildTokens(state) {
    * 手写取值只提供色相与饱和度，明度由求解器按可读性契约决定 —— 见 `solveAccent`。
    */
   const accent = solveAccent(accentEntry, preset)
+  const semantic = solveSemantic(preset)
   const syntax = solveSyntax(HOST_SHIKI, preset)
 
   /**
    * 文字阶梯也过一遍求解：四个预设的墨色是美术选择，但「三级文字能不能读」
    * 不该由美术选择决定。实测石墨与纸感的浅色下三级文字只有 3.65 / 3.88，
    * 比官方基线（3.71）还低 —— 求解器把它们抬到 AA。
+   *
+   * ## v1.3：把「悬停淡染层」也算进去
+   * 这一族此前只对**平面**表面求解，而宿主动辄把 `--dsw-alias-interactive-bg-hover`
+   * 铺在文字底下（`Menu.module.css` 的 `.item:hover`，行里还有 11px 的
+   * `.shortcutKeys` 与 `.label`）。深色模式下强调色是亮色，那层 12% 的罩层把
+   * 深底**提亮**，于是同一段灰字的有效底变亮了：
+   *
+   *   石墨 + 石墨灰 + 深色，卡片上的 caption 从 3.x 掉到 **2.06**（目标 3）、
+   *   tertiary 掉到 **3.06**（目标 4.5）—— 全 1680 组「文字 × 悬停底」里
+   *   **969 组低于自己的档位**。
+   *
+   * 这是「契约的输入集少了一类底」的典型：不是算错，是没算 —— 与 v1.2 漏掉
+   * 输入框占位文字、v1.3 漏掉语义色是同一类。修法是把这两层加进 `all`，
+   * 让整支阶梯在**它真正会落在的所有底**上都达标。
+   *
+   * ## 哪几级进得了这个约束集，是算出来的，不是挑出来的
+   * 罩层把深色底**提亮**，于是「最亮的那支墨还能不能达标」变成一条算术题：
+   * 底越亮，纯白能拿到的对比度越低。实测最亮的那层（surface3 + 按下罩层）
+   * 相对亮度 0.057，**纯白对它也只有 9.8:1** —— 于是：
+   *
+   *   · tertiary(4.5) / caption(3) / secondary(5.5) / icon(3)：可行，纳入；
+   *   · primary(12) 与 dimmed(9)：**数学上不可行**（12 需要底 ≤0.0375）。
+   *
+   * 这两级因此保持「对平面表面求解」：它们的高底线是稳态界面的美术标准，
+   * 而不是一个瞬态底色上的承诺。悬停时它们仍然读得出来（实测最低 8.6:1，
+   * 高于 AAA 的 7），只是不再满足插件自定的 12 —— `scripts/check.mjs`
+   * 会把这个实测值连同它的来源一起钉住，而不是让这条界线消失在注释里。
    */
+  const HOVER_WASH = { light: 0.08, dark: 0.12 }
+  const ACTIVE_WASH = { light: 0.14, dark: 0.2 }
   const neutralText = {}
   for (const mode of ['light', 'dark']) {
     const neutral = preset.neutral[mode]
     const surfaces = surfaceColors(neutral)
     const canvas = neutral.canvas
-    const all = [...surfaces, canvas]
+    const accentColor = accent[mode]
+    const flat = [...surfaces, canvas]
+    /** 悬停 / 按下时文字真正压在什么上：强调色罩层合成到每一支平面底上。 */
+    const washed = flat.flatMap((surface) => [
+      tint(surface, accentColor, HOVER_WASH[mode]),
+      tint(surface, accentColor, ACTIVE_WASH[mode])
+    ])
+    const transient = [...flat, ...washed]
     neutralText[mode] = {
-      ink: ensureContrast(neutral.ink, canvas, TEXT_TIERS.primary),
-      inkDimmed: ensureContrastAllSurfaces(neutral.inkDimmed, all, TEXT_TIERS.dimmed),
-      inkSecondary: ensureContrastAllSurfaces(neutral.inkSecondary, all, TEXT_TIERS.secondary),
-      inkTertiary: ensureContrastAllSurfaces(neutral.inkTertiary, all, TEXT_TIERS.tertiary),
-      inkCaption: ensureContrastAllSurfaces(neutral.inkCaption, all, TEXT_TIERS.caption),
+      ink: solveTone(neutral.ink, flat, TEXT_TIERS.primary),
+      inkDimmed: ensureContrastAllSurfaces(neutral.inkDimmed, flat, TEXT_TIERS.dimmed),
+      inkSecondary: ensureContrastAllSurfaces(
+        neutral.inkSecondary,
+        transient,
+        TEXT_TIERS.secondary
+      ),
+      inkTertiary: ensureContrastAllSurfaces(
+        neutral.inkTertiary,
+        transient,
+        TEXT_TIERS.tertiary
+      ),
+      inkCaption: ensureContrastAllSurfaces(
+        neutral.inkCaption,
+        transient,
+        TEXT_TIERS.caption
+      ),
       // 占位文字（`--dsw-alias-label-dimmed`）是**正文**，不是描边：
       // 宿主唯一的消费者是 `.input::placeholder`，14px。v1.1 把它绑在描边色上，
       // 实测只有 1.48–2.00:1。这里从说明文字那支墨出发解到 AA ——
       // 从 inkCaption 起步而不是 inkTertiary，是为了让占位文字比三级文字淡一点，
-      // 保持「提示 < 正文」的层级感。
-      placeholder: ensureContrastAllSurfaces(neutral.inkCaption, all, AA),
-      icon: ensureContrastAllSurfaces(neutral.icon, all, NON_TEXT)
+      // 保持「提示 < 正文」的层级感。输入框不会悬停变色，因此仍按平面底求解。
+      placeholder: ensureContrastAllSurfaces(neutral.inkCaption, flat, AA),
+      icon: ensureContrastAllSurfaces(neutral.icon, transient, NON_TEXT)
     }
   }
 
@@ -940,6 +1162,121 @@ export function buildTokens(state) {
   tokens['--dsw-alias-link'] = t(accent.light, accent.dark)
   tokens['--dsw-focus-ring-color'] = t(accent.light, accent.dark)
   tokens['--dsw-alias-label-deep-diving'] = t(accent.light, accent.dark)
+  // 思考态的**扫光**：宿主把 `--dsw-alias-label-shimmer` 在这一处重指到
+  // `-deep-diving-shimmer`（`.running { --dsw-alias-label-shimmer: var(...-deep-diving-shimmer);
+  // color: var(...-deep-diving) }`），TextShimmer 再用它把正文**再画一遍**、
+  // 遮罩成一条扫过的带。因此它是「同一个色相的两个明度」，
+  // v1.2 只接管了其中一支（正文 = 强调色），扫光留在宿主的蓝上 ——
+  // 非蓝强调色下，扫光颜色不属于用户选的那套配色。
+  // 现在两支同源：扫光 = 强调色朝画布方向退一段，退到与正文刚好可分辨（≥1.5，
+  // 官方自己那一对是 1.6 上下 —— 它本来就是一道若有若无的微光）。
+  tokens['--dsw-alias-label-deep-diving-shimmer'] = t(
+    tint(accent.light, L.canvas, THINK_SHIMMER_MIX),
+    tint(accent.dark, D.canvas, THINK_SHIMMER_MIX)
+  )
+
+  // ---- 语义色（成功 / 警告 / 危险）---------------------------------------
+  // 这是 v1.3 的主题。v1.2 把强调色解了出来，却把**同一张样式表里隔三行的
+  // 兄弟规则**整族留给了宿主：Tag 的 info 语气被求解，success/warning/danger
+  // 三个语气一条没算；差异视图的 `.add` 正文实测只有 **1.91:1**。
+  // 理由与做法见 solveSemantic —— 色相锁死、只动明度。
+  //
+  // 这里**没有开关**：它不是一种「口味」，而是一处与 v1.2 同类（甚至更明显）的
+  // 可读性缺陷 —— 「通过」徽标的正文、差异视图的新增行正文，都是要被读的内容。
+  // v1.2 也没有为「把字解到达标」提供开关。
+  tokens['--dsw-alias-state-success-primary'] = t(
+    semantic.light.success,
+    semantic.dark.success
+  )
+  // 淡染层：与 Tag 的 `color-mix(色 10%, transparent)` 同源，
+  // 只是把它落成实色（宿主把它当 ConnectionIndicator 的底）。
+  tokens['--dsw-alias-state-success-tertiary'] = t(
+    tint(L.surface1, semantic.light.success, SEMANTIC_WASH.success),
+    tint(D.surface1, semantic.dark.success, SEMANTIC_WASH.success)
+  )
+  tokens['--dsw-alias-state-success-secondary'] = t(
+    semantic.light.successSoft,
+    semantic.dark.successSoft
+  )
+  tokens['--dsw-alias-state-warn-primary'] = t(semantic.light.warn, semantic.dark.warn)
+  tokens['--dsw-alias-state-warn-tertiary'] = t(
+    tint(L.surface1, semantic.light.warn, SEMANTIC_WASH.warn),
+    tint(D.surface1, semantic.dark.warn, SEMANTIC_WASH.warn)
+  )
+  // 宿主的 label 与 primary 是两支琥珀（600 / 500）。插件的求解已经保证了
+  // 「同色相 + 压得住自己的淡染层」，再分两支只会让它们各自解到不同明度、
+  // 于是在连接指示里同时出现两种琥珀。合成一支 —— 一个状态一个颜色。
+  tokens['--dsw-alias-state-warn-label'] = t(semantic.light.warn, semantic.dark.warn)
+  tokens['--dsw-alias-state-warn-secondary'] = t(
+    semantic.light.warnSoft,
+    semantic.dark.warnSoft
+  )
+  tokens['--dsw-alias-state-error-primary'] = t(semantic.light.error, semantic.dark.error)
+  tokens['--dsw-alias-state-error-secondary'] = t(
+    semantic.light.errorSoft,
+    semantic.dark.errorSoft
+  )
+  // `--dsw-alias-state-idle-primary` **刻意不接管**：它是「待处理」状态点的
+  // 弱化档，宿主的 1.5:1 是有意为之。理由写在 readability.js 的 UNCOVERED。
+
+  // 差异视图的整行淡染：宿主用的是 8%（浅色）/ 12%（深色）的 alpha 绿红，
+  // 由浏览器合成在半透明层上。这里保持同样的语义（一层随底色走的淡染），
+  // 只把颜色换成求解后的语义色 —— 于是 `.add` 的正文终于对得上它的底。
+  tokens['--dsw-alias-code-diff-added'] = t(
+    alpha(semantic.light.success, DIFF_WASH.light),
+    alpha(semantic.dark.success, DIFF_WASH.dark)
+  )
+  tokens['--dsw-alias-code-diff-deleted'] = t(
+    alpha(semantic.light.error, DIFF_WASH.light),
+    alpha(semantic.dark.error, DIFF_WASH.dark)
+  )
+  // 文件级差异：整块底、行号槽、左侧标记。宿主这三支是写死的十六进制
+  // （浅色 `#e6f4e7` / `#edf7ed` / `#01a241`），完全不随预设走 ——
+  // 在纸感（暖白）与午夜（冷黑）上都是一块突兀的冷绿。现在按同一支语义色
+  // 在画布上派生：行底掺 10%，行号槽掺 5%（宿主的槽比行**更淡**，两种明暗都是），
+  // 标记用求解后的本色。
+  for (const [family, [light, dark]] of [
+    ['added', [semantic.light.success, semantic.dark.success]],
+    ['deleted', [semantic.light.error, semantic.dark.error]]
+  ]) {
+    tokens[`--dsw-alias-file-diff-${family}-bg`] = t(
+      tint(L.canvas, light, 0.1),
+      tint(D.canvas, dark, 0.1)
+    )
+    tokens[`--dsw-alias-file-diff-${family}-gutter`] = t(
+      tint(L.canvas, light, 0.05),
+      tint(D.canvas, dark, 0.05)
+    )
+    tokens[`--dsw-alias-file-diff-${family}-marker`] = t(light, dark)
+  }
+  tokens['--dsw-alias-interactive-bg-hover-danger'] = t(
+    alpha(semantic.light.error, 0.08),
+    alpha(semantic.dark.error, 0.15)
+  )
+
+  // ---- 宿主缺口的修正 -----------------------------------------------------
+  // 这两个令牌**宿主从未声明过**，却有组件在消费它们。这不是猜测：
+  // `scripts/audit-consumers.mjs` 把「被消费、却从未声明」的令牌从宿主样式与
+  // 51 个 bundle 里枚举出来（见 reference/host-consumers.json），它们就在那张表里。
+  // 缺失的后果各不相同，但都是静默的：
+  //
+  //   · `--dsw-alias-label-error` —— `color: var(--该令牌)` 在计算值阶段成为
+  //     guaranteed-invalid，`color` 于是按 `unset` 处理（= 继承）。
+  //     结果：设置页的「保存失败」提示用的是正文墨色，与普通文字一模一样，
+  //     用户看不出这次保存失败了。
+  //   · `--dsw-alias-bg-layer-4` —— 同理，`background` 落到 initial（transparent）。
+  //     结果：设置页那个「?」帮助按钮悬停时没有底色反馈。
+  //
+  // 修法就是把这两支补上，并从预设里取值 —— 与 v1.0 修灯箱关闭按钮同属一类：
+  // 不改宿主，只把它漏掉的那一格填上。
+  tokens['--dsw-alias-label-error'] = t(semantic.light.error, semantic.dark.error)
+  // 表面阶梯的第四级。宿主的 1/2/3 在浅色下全是纯白，第四级本来就是
+  // 「悬停时那一点可见的差」；这里按同一支笔派生：浅色往墨色掺 6%，
+  // 深色往白色掺 6%（深色下越高越亮），于是它天然是第 3 级之上的一档。
+  tokens['--dsw-alias-bg-layer-4'] = t(
+    tint(L.surface3, neutralText.light.ink, 0.06),
+    tint(D.surface3, '#ffffff', 0.06)
+  )
 
   // ---- 交互态 -------------------------------------------------------------
   // 这些淡染层之上压的是正文（`--dsw-alias-label-primary`）或强调色本身，
@@ -1100,6 +1437,12 @@ export function buildTokens(state) {
     const px = `${radius.radii[key]}px`
     tokens[name] = t(px, px)
   }
+  // 圆角形状：宿主把它声明在 `:root`、由 `*` 规则消费，因此 body 上的行内值
+  // 能正常继承到全部后代（唯一够不着的是 `html` 自己，而它没有可见圆角）。
+  // 取值必须是合法的 `corner-shape` 语法 —— 宿主那句 `@supports` 保证
+  // 不支持的浏览器根本不会消费这个令牌，所以写错也只是静默无效，
+  // 因此 check.mjs 直接断言三档的语法。
+  tokens['--dsw-corner-shape'] = t(corner.css, corner.css)
   // Windows 标题栏模式下内容区左上角的那个圆角。宿主把它声明在 frame 元素上，
   // 行内值够不着，因此这里只交出原语，由 base.css 以更高特异性贴上去。
   tokens['--dshb-content-radius'] = t(

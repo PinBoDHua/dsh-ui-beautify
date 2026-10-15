@@ -10,6 +10,10 @@ verify/host-src/
 # 由 prepare.mjs 生成的中间产物
 verify/build/
 
+# 复核 / 调试用的临时脚本与快照。它们是过程产物，结论都写进了 CHANGELOG 与 DESIGN
+# （`verify/tmp-main/`、`verify/tmp-audit*/`、`verify/tmp-*.mjs`），不该混进提交。
+verify/tmp-*/
+
 # 无头浏览器的临时配置目录
 verify/.chrome-profile/
 

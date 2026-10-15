@@ -42,11 +42,21 @@ const readability = await import(
 )
 const colorMath = await import(new URL('../src/client/color.js', import.meta.url).href)
 
-const { ACCENTS, PRESETS, RADIUS_SCALES, buildTokens } = presets
+const { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, buildTokens } = presets
 const { DEFAULT_STATE, normalizeState } = state
-const { evaluate, PAIRS, TEXT_TIERS, SURFACE_KEYS, HOST_FALLBACK, surfaceColors } =
-  readability
-const { analyzeBackdrops, contrast, luminance, toHsl } = colorMath
+const {
+  AA,
+  PAIRS,
+  TEXT_TIERS,
+  DELIBERATE,
+  HOST_FALLBACK,
+  HOST_GAPS,
+  INFEASIBLE,
+  UNCOVERED,
+  evaluate,
+  surfaceColors
+} = readability
+const { analyzeBackdrops, contrast, luminance, parseHex, tint, toHsl } = colorMath
 
 const cssFiles = readdirSync(join(SRC, 'styles')).filter((f) => f.endsWith('.css'))
 const css = Object.fromEntries(
@@ -73,7 +83,14 @@ const hostTokens = existsSync(join(ROOT, 'reference', 'host-tokens.json'))
   : null
 
 if (hostTokens === null) {
-  bad('缺少 reference/host-tokens.json —— 无法校验令牌名，请先运行 scripts/host-tokens.mjs')
+  // 基准表是**维护者快照**（输入是宿主的样式资源，不进仓库也不进安装副本，
+  // 见 install.mjs 的 COPY_EXCLUDE）。因此缺失时降级为提示，而不是失败 ——
+  // 「装好的插件里 `npm run check` 报缺少 reference/…」是一句对用户毫无意义的错误，
+  // 而它会连带报出一串假的「变量无法解析」。真正的护栏在维护者检出里跑。
+  notes.push(
+    '  · 缺少 reference/host-tokens.json —— 跳过了「覆盖的令牌名是否宿主真的声明过」这条校验。' +
+      '在维护者检出里运行 `node scripts/host-tokens.mjs <提取目录> reference/host-tokens.json` 生成。'
+  )
 }
 
 // ------------------------------------------- 2. 全组合令牌值形状 + 名字有效性
@@ -132,17 +149,25 @@ for (const combo of combos) {
 ok(`令牌形状：${combos.length} 种状态组合、${tokenCount} 次取值全部为 { light, dark } 字符串对`)
 
 if (hostTokens) {
+  // 基准表记的是「宿主**声明过**的令牌」。插件还有两类例外，都在
+  // readability.js 里逐条写明了理由，并由下面的断言核对：
+  //   · HOST_GAPS —— 宿主从未声明、却真的在被消费（补上它才是修缺陷）；
+  //   · UNCOVERED / DELIBERATE —— 见 9.9 节。
+  const declaredGaps = new Set(Object.keys(HOST_GAPS))
   const unknown = [...overriddenNames].filter(
-    (name) => !name.startsWith('--dshb-') && !hostTokens.has(name)
+    (name) =>
+      !name.startsWith('--dshb-') && !hostTokens.has(name) && !declaredGaps.has(name)
   )
   if (unknown.length > 0) {
     bad(
-      `以下令牌在宿主基准表里不存在，覆盖将静默无效：\n      ${unknown.join('\n      ')}`
+      `以下令牌在宿主基准表里不存在，覆盖将静默无效（若确实是宿主缺口，请登记进 HOST_GAPS）：\n      ${unknown.join('\n      ')}`
     )
   } else {
     const hostOwned = [...overriddenNames].filter((n) => !n.startsWith('--dshb-'))
+    const inBaseline = hostOwned.filter((name) => hostTokens.has(name)).length
     ok(
-      `令牌名：覆盖的 ${hostOwned.length} 个宿主令牌全部存在于基准表（共 ${hostTokens.size} 个）`
+      `令牌名：覆盖的 ${hostOwned.length} 个宿主令牌中，${inBaseline} 个存在于基准表` +
+        `（共 ${hostTokens.size} 个），另有 ${hostOwned.length - inBaseline} 个是已登记并逐个核对的宿主缺口`
     )
   }
 }
@@ -641,13 +666,10 @@ for (const name of Object.keys(HOST_FALLBACK)) {
   }
 }
 
-// fallback 是**声明**而不是猜测：这里把它与宿主基准表交叉核对。
-// 宿主升级后如果改了这些令牌的语义，这条断言会提示复核。
-if (hostTokens) {
-  ok(
-    `契约 fallback：${Object.keys(HOST_FALLBACK).length} 个未覆盖令牌都声明了官方取值并经基准表校验`
-  )
-}
+// fallback 是**声明**而不是猜测。v1.2 在这里只打印了一句「都声明了官方取值并经
+// 基准表校验」—— 那是一条恒真的语句，而基准表当时也没有取值可比。真正的比对
+// 搬到了 9.9 节的断言 C（拿 reference/host-consumers.json 里宿主**声明过的值**
+// 逐条核对，含一层 var() 解析），因此这里不再重复一句不会失败的话。
 
 // 背景组必须同侧：混侧时求解器的可行区间可能为空，那属于设计错误，
 // 应当在构建期暴露，而不是让求解器给出一个奇怪的颜色。
@@ -659,7 +681,11 @@ if (hostTokens) {
 // 有间隔 ⇒ 搜索区间落在表面另一侧 ⇒ 单调。
 // 实测亮侧表面最低 0.818、亮侧墨最高 0.370（间隔 0.45）；暗侧表面最高 0.028、
 // 暗侧墨最低 0.155（间隔 0.13）。这里要求至少 0.25 / 0.08，留出余量。
-// 将来加一个中间调的预设，这条断言会先失败，而不是让求解器悄悄给出劣解。
+//
+// 注意这条断言测的是**墨与表面的间隔**，不是「表面落在极亮/极暗两端」——
+// v1.2 的注释把两者混为一谈，于是一份表面全在 0.52–0.62 中间带的合成预设
+// 也能通过（间隔 0.31）。真正要守的那条由此处的 `SURFACE_BAND` 断言补上，
+// 它直接检查契约用到的每一支底色：要么极亮、要么极暗，没有中间地带。
 const INK_GAP = { light: 0.25, dark: 0.08 }
 const INK_KEYS = ['ink', 'inkDimmed', 'inkSecondary', 'inkTertiary', 'inkCaption']
 for (const preset of PRESETS) {
@@ -799,6 +825,413 @@ if (!Array.isArray(manifestInject) || manifestInject.length === 0) {
   for (const id of ['@deepseek-ai/dsh-client-ui-theme', '@deepseek-ai/dsh-client-ui-slots']) {
     if (!manifestInject.includes(id)) bad(`dsh.client.inject 缺少必需依赖 ${id}`)
   }
+}
+
+// ============================================================================
+// 9.9 v1.3：覆盖面 —— 把「有没有漏掉」也变成一条会失败的断言
+//
+// v1.2 写下了自己最大的教训：「**写下一份 41 条的清单，不等于覆盖了 117 个令牌**」，
+// 以及「一条永远不可能失败的断言，和没有断言是一回事」。这一节把两句话都变成代码：
+// 用 `reference/host-consumers.json`（宿主样式与 51 个 bundle 的消费点索引）来回答
+// 「插件覆盖的令牌里，有哪些被宿主当文字色用、却从没进过契约」——
+// 那份清单要么被补进契约，要么在 `UNCOVERED` 里写明为什么不用。
+// ============================================================================
+
+const consumersPath = join(ROOT, 'reference', 'host-consumers.json')
+const consumers = existsSync(consumersPath)
+  ? JSON.parse(readFileSync(consumersPath, 'utf8'))
+  : null
+
+if (consumers === null) {
+  // 索引是**维护者检查用**的快照（输入是宿主样式，不进仓库），
+  // 因此缺失时降级为一条提示，而不是让整份审计失败 ——
+  // 用户装好的插件里不该出现「缺少 reference/…」这种与它无关的报错。
+  notes.push(
+    '  · 缺少 reference/host-consumers.json —— 跳过了「覆盖率」这一组断言。' +
+      '在维护者检出里运行 `node scripts/audit-consumers.mjs <宿主资源目录> reference/host-consumers.json` 生成。'
+  )
+}
+
+if (consumers) {
+  /** 契约引用到的全部令牌（`fg` / `bg` / `tintOf` / `over` 都算）。 */
+  const contractTokens = new Set()
+  for (const pair of PAIRS) {
+    for (const key of ['fg', 'bg', 'tintOf', 'over']) {
+      const ref = pair[key]
+      if (typeof ref === 'string' && ref.startsWith('--')) contractTokens.add(ref)
+    }
+  }
+
+  /** 插件真正覆盖的令牌（含未开启 typography / glass 的那些组合）。 */
+  const allOverrides = new Set()
+  for (const combo of combos) {
+    for (const name of Object.keys(buildTokens(combo))) allOverrides.add(name)
+  }
+
+  // ---- 断言 A：被宿主当文字色消费、且插件覆盖了的令牌，必须有归属 ----
+  const uncovered = []
+  for (const [token, entry] of Object.entries(consumers.tokens)) {
+    if (!allOverrides.has(token)) continue
+    if (contractTokens.has(token)) continue
+    if (Object.hasOwn(UNCOVERED, token)) continue
+    if (Object.hasOwn(DELIBERATE, token)) continue
+    if ((entry.textTotal ?? 0) === 0) continue
+    const sample = entry.text[0]
+    uncovered.push(
+      `${token}（${entry.textTotal} 处，例如 ${sample.property}: ${sample.value}）`
+    )
+  }
+  if (uncovered.length > 0) {
+    bad(
+      `以下令牌被宿主当文字色消费、插件也确实覆盖了它们，却既不在可读性契约里、\n` +
+        `      也没在 UNCOVERED / DELIBERATE 里声明理由 —— 「漏掉」这件事必须被显式处理：\n      ${uncovered.join('\n      ')}`
+    )
+  } else {
+    ok(`覆盖率：宿主对 ${contractTokens.size} 个契约令牌的消费点全部有归属，无「忘了被求解」的覆盖`)
+  }
+
+  // ---- 断言 B：UNCOVERED 不能是一份过期清单 ----
+  for (const [token, entry] of Object.entries(UNCOVERED)) {
+    if (!allOverrides.has(token)) {
+      bad(`UNCOVERED 里的 ${token} 其实没有被插件覆盖 —— 它是一段死声明（不覆盖的理由请写进 DELIBERATE）`)
+    }
+    if (contractTokens.has(token)) {
+      bad(`UNCOVERED 里的 ${token} 已经在契约里了 —— 两边只能留一边`)
+    }
+    if ((consumers.tokens[token]?.textTotal ?? 0) === 0) {
+      bad(`UNCOVERED 里的 ${token} 并没有被宿主当文字色消费 —— 豁免的理由不成立`)
+    }
+    if (typeof entry.reason !== 'string' || entry.reason.trim().length < 20) {
+      bad(`UNCOVERED 里的 ${token} 没有给出足够的理由`)
+    }
+  }
+  if (Object.keys(UNCOVERED).length > 0) {
+    ok(`豁免声明：${Object.keys(UNCOVERED).length} 条 UNCOVERED 全部被覆盖、未进契约、确有文字消费者，且写明了理由`)
+  }
+
+  // ---- 断言 B2：DELIBERATE 与 HOST_GAPS 同样不能过期 ----
+  for (const [token, entry] of Object.entries(DELIBERATE)) {
+    if (allOverrides.has(token)) {
+      bad(`DELIBERATE 里的 ${token} 已经被插件覆盖了 —— 请把它从这张表里删掉`)
+    }
+    if ((consumers.tokens[token]?.textTotal ?? 0) === 0) {
+      bad(`DELIBERATE 里的 ${token} 并没有被宿主当文字色消费 —— 这条边界说明已经过时`)
+    }
+    if (typeof entry.reason !== 'string' || entry.reason.trim().length < 20) {
+      bad(`DELIBERATE 里的 ${token} 没有给出足够的理由`)
+    }
+  }
+  if (Object.keys(DELIBERATE).length > 0) {
+    ok(`边界声明：${Object.keys(DELIBERATE).length} 条 DELIBERATE 确实没被覆盖、确有文字消费者，且写明了理由`)
+  }
+
+  for (const [token, entry] of Object.entries(HOST_GAPS)) {
+    if (!allOverrides.has(token)) {
+      bad(`HOST_GAPS 里的 ${token} 并没有被插件补上 —— 声明了缺口却不修，等于没声明`)
+    }
+    const record = consumers.tokens[token]
+    const consumed = (record?.textTotal ?? 0) + (record?.surfaceTotal ?? 0)
+    if (consumed === 0) {
+      bad(`HOST_GAPS 里的 ${token} 在宿主索引里没有任何消费者 —— 这条补丁是多余的`)
+    }
+    if ((record?.declaredTotal ?? 0) > 0) {
+      bad(`HOST_GAPS 里的 ${token} 其实被宿主声明过（${record.declared[0].value}）—— 它不是一个缺口`)
+    }
+    if (typeof entry.reason !== 'string' || entry.reason.trim().length < 20) {
+      bad(`HOST_GAPS 里的 ${token} 没有给出足够的理由`)
+    }
+  }
+  if (Object.keys(HOST_GAPS).length > 0) {
+    ok(`宿主缺口：${Object.keys(HOST_GAPS).length} 条 HOST_GAPS 都「有消费者、零声明」，且真的被插件补上`)
+  }
+
+  // ---- 断言 C：HOST_FALLBACK 的取值与宿主真实声明一致 ----
+  //
+  // v1.2 的注释声称「有一条断言把 fallback 与宿主基准表逐条比对」。事实是：
+  // 当时的基准表只有名字、没有取值，断言只校验了名字 —— 于是
+  // `--dsw-alias-button-contrast-fill` 抄成了另一个令牌的值（#54555780）
+  // 也没人发现，而它的真实取值是 #61666b（浅色）/ #f9fafb（深色）。
+  // 现在取值也在索引里，这条承诺才真的兑现。
+  /** 把所有「字面量取值」的自定义属性收成表，用于解析一层 `var()`。 */
+  const literal = new Map()
+  for (const [token, entry] of Object.entries(consumers.tokens)) {
+    for (const item of entry.declared ?? []) {
+      if (parseHex(item.value) !== null) literal.set(token, item.value)
+    }
+  }
+  const resolveLiteral = (value) => {
+    const ref = /^var\(\s*(--[a-z0-9-]+)\s*\)$/.exec(String(value).trim())
+    if (ref === null) return value
+    return literal.get(ref[1]) ?? null
+  }
+  /** 取宿主在某个明暗下声明过的取值：深色看带 data-ds-dark-theme 的规则。 */
+  function hostDeclared(token, mode) {
+    const entry = consumers.tokens[token]
+    if (!entry?.declared) return null
+    const wanted = mode === 'dark'
+    for (const item of entry.declared) {
+      const isDark = item.selector.includes('data-ds-dark-theme')
+      if (isDark !== wanted) continue
+      const value = resolveLiteral(item.value)
+      if (value !== null && parseHex(value) !== null) return value
+    }
+    return null
+  }
+  /** 两个颜色字面量是否同一个颜色（`#fff` 与 `#ffffff` 是同一个）。 */
+  const sameColor = (a, b) => {
+    const left = parseHex(a)
+    const right = parseHex(b)
+    if (left === null || right === null) return String(a) === String(b)
+    return left.r === right.r && left.g === right.g && left.b === right.b
+  }
+  for (const [token, expected] of Object.entries(HOST_FALLBACK)) {
+    for (const mode of ['light', 'dark']) {
+      const actual = hostDeclared(token, mode)
+      if (actual === null) {
+        bad(`HOST_FALLBACK 里的 ${token} 在宿主索引里找不到 ${mode} 的声明取值，无法核对`)
+        continue
+      }
+      if (!sameColor(actual, expected[mode])) {
+        bad(
+          `HOST_FALLBACK 的 ${token}.${mode} 声明为 ${expected[mode]}，` +
+            `而宿主真实声明是 ${actual} —— 契约算的是一个不存在的前景/背景`
+        )
+      }
+    }
+  }
+  ok(`契约 fallback：${Object.keys(HOST_FALLBACK).length} 条未覆盖令牌的取值与宿主真实声明逐条一致`)
+
+  // ---- 断言 D：宿主「被消费却从未声明」的缺口必须被处理 ----
+  const gaps = []
+  for (const [token, entry] of Object.entries(consumers.tokens)) {
+    if ((entry.textTotal ?? 0) === 0 && (entry.surfaceTotal ?? 0) === 0) continue
+    if ((entry.declaredTotal ?? 0) > 0) continue
+    gaps.push(token)
+  }
+  const undeclared = gaps.filter((token) => !allOverrides.has(token))
+  if (undeclared.length > 0) {
+    notes.push(
+      `  · 宿主「有消费者、却从未声明」的令牌 ${undeclared.length} 个（插件补了其中的 ${gaps.length - undeclared.length} 个）：` +
+        undeclared.slice(0, 6).join(', ') +
+        (undeclared.length > 6 ? ' …' : '')
+    )
+  }
+}
+
+// ---- 断言 E：INFEASIBLE 声明的「方向冲突」必须仍然成立 ----
+//
+// 一条被悄悄省掉的配对，和「这里没问题」是一回事。因此省掉的部分必须写下来，
+// 而「为什么省掉」要能被机器复核：两个落点必须分处明暗两侧 —— 也就是
+// 求解器无论如何都会返回 null。哪天有人把轻提示的底改成浅色，它会立刻失败。
+for (const entry of INFEASIBLE) {
+  const tokens = buildTokens({
+    enabled: true,
+    preset: PRESETS[0].id,
+    accent: ACCENTS[0].id,
+    radius: 'standard',
+    corner: CORNER_SHAPES[1].id,
+    ambient: true,
+    motion: true,
+    typography: true,
+    glass: true
+  })
+  const sharpBackground = tokens[entry.sharp.against]?.[entry.mode]
+  const softBackground = tokens[entry.soft.against]?.[entry.mode]
+  if (sharpBackground === undefined || softBackground === undefined) {
+    bad(`INFEASIBLE ${entry.id} 引用了取不到值的令牌`)
+    continue
+  }
+  const sharpSide = luminance(sharpBackground)
+  const softSide = luminance(softBackground)
+  if (!(sharpSide > 0.4 && softSide <= 0.4)) {
+    bad(
+      `INFEASIBLE ${entry.id} 声称「两个角色方向相反」，但 ${entry.sharp.against}=${sharpBackground}` +
+        `（亮度 ${sharpSide.toFixed(3)}）与 ${entry.soft.against}=${softBackground}（亮度 ${softSide.toFixed(3)}）` +
+        ` 并不分处明暗两侧 —— 这个矛盾已经不成立了，请把配对写回契约。`
+    )
+  }
+}
+if (INFEASIBLE.length > 0) {
+  ok(`可行域声明：${INFEASIBLE.length} 条 INFEASIBLE 的两个落点确实分处明暗两侧（方向冲突成立）`)
+}
+
+// ---- 断言 F：语义色只许动明度，色相必须留在约定的色域里 ----
+//
+// 强调色的色相由用户挑，语义色的色相是**约定**：绿=成功、琥珀=警告、红=危险。
+// 求解器只沿明度轴移动，这条断言把这个「只」变成可失败的事实 ——
+// 有人把 success 改成蓝的，构建期就会响。
+const SEMANTIC_HUE = { success: [80, 180], warn: [20, 70], error: [330, 360], errorLow: [0, 25] }
+const SEMANTIC_KEYS = ['success', 'warn', 'error']
+let semanticHueChecks = 0
+for (const preset of PRESETS) {
+  for (const accent of ACCENTS) {
+    const tokens = buildTokens({
+      enabled: true,
+      preset: preset.id,
+      accent: accent.id,
+      radius: 'standard',
+      corner: CORNER_SHAPES[1].id,
+      ambient: true,
+      motion: true,
+      typography: true,
+      glass: true
+    })
+    for (const key of SEMANTIC_KEYS) {
+      for (const mode of ['light', 'dark']) {
+        const value = tokens[`--dsw-alias-state-${key}-primary`]?.[mode]
+        if (value === undefined) {
+          bad(`语义色 ${key} 没有被投射出去`)
+          continue
+        }
+        const hue = toHsl(value).h
+        const [low, high] = SEMANTIC_HUE[key]
+        const inRange =
+          key === 'error'
+            ? (hue >= low && hue <= high) || (hue >= SEMANTIC_HUE.errorLow[0] && hue <= SEMANTIC_HUE.errorLow[1])
+            : hue >= low && hue <= high
+        if (!inRange) {
+          bad(
+            `语义色 ${key} 在 ${preset.id}/${accent.id}/${mode} 解出了 ${value}（色相 ${hue.toFixed(0)}°），` +
+              `跑出了「${key}」的约定色域 —— 语义色只应移动明度`
+          )
+        }
+        semanticHueChecks += 1
+      }
+    }
+  }
+}
+ok(`语义色色相：${semanticHueChecks} 组取值全部落在成功/警告/危险各自的约定色域内`)
+
+// ---- 断言 G：圆角形状的取值必须是合法语法，且默认档与官方一致 ----
+const CORNER_SHAPE_SYNTAX = /^(round|square|bevel|scoop|notch|superellipse\(\s*\d+(\.\d+)?\s*\))$/
+for (const shape of CORNER_SHAPES) {
+  if (!CORNER_SHAPE_SYNTAX.test(shape.css)) {
+    bad(`圆角形状 ${shape.id} 的取值 ${shape.css} 不是合法的 corner-shape 语法`)
+  }
+}
+const cornerValues = CORNER_SHAPES.map((s) => s.css)
+if (new Set(cornerValues).size !== cornerValues.length) {
+  bad('圆角形状里有重复取值 —— 切换档位不会有任何变化')
+}
+// 宿主 corner_shape.css 写的是 `superellipse(1.5)`；默认档必须等于它，
+// 否则「装上插件但什么都不改」就已经改变了观感。
+const DEFAULT_CORNER = CORNER_SHAPES.find((s) => s.id === DEFAULT_STATE.corner)
+if (DEFAULT_CORNER?.css !== 'superellipse(1.5)') {
+  bad(
+    `默认圆角形状是 ${DEFAULT_CORNER?.css}，而宿主 corner_shape.css 的取值是 superellipse(1.5) —— ` +
+      `默认档必须与官方一致，否则「什么都不改」也会改变观感`
+  )
+}
+ok(`圆角形状：${CORNER_SHAPES.length} 档语法合法、互不相同，默认档对齐宿主 superellipse(1.5)`)
+
+// ---- 断言 H：内容区圆角的覆盖规则必须真的赢过宿主 ----
+//
+// 这是一个真实缺陷：v1.2 用的是 `html body [class*='_frame']`，座标 (0,1,2)；
+// 宿主 `[data-windows-titlebar] .xxx_frame` 是 (0,2,0)。**属性选择器与类同级**，
+// 1 < 2，宿主赢 —— 那条规则从未生效，圆角档位对内容区左上角完全无效。
+// 躲过全部检查的原因是默认档（standard）恰好也是 16px。
+// 因此这里断言：Windows 条件必须挂在 `html` 上，让座标变成 (0,2,2)。
+const frameRules = leafBlocks(stripCssComments(css['base.css'] ?? '')).filter((block) =>
+  block.selector.includes('_frame')
+)
+if (frameRules.length === 0) {
+  bad('base.css 里找不到内容区圆角的覆盖规则')
+}
+for (const block of frameRules) {
+  if (!block.selector.includes('html[data-windows-titlebar]')) {
+    bad(
+      `内容区圆角规则的选择器是 ${block.selector}，特异性低于宿主的 [data-windows-titlebar] .frame —— ` +
+        `这条规则不会生效。必须写成 html[data-windows-titlebar] body […]`
+    )
+  }
+}
+
+// ---- 断言 I：求解的墨色种子必须待在表面的**另一侧** ----
+//
+// 这是求解器「一次二分就够」的前提：候选解只要始终待在底色的另一侧，对比度对明度
+// 就是单调的。判据不是「种子算亮侧还是暗侧」（那是 0.4 阈值那套粗分类，
+// 深色预设里的三级文字本身也在暗侧），而是更直接的一条：**种子必须比表面更远离背景**，
+// 于是求解只会把它推得更远、不会越过表面。
+let directionChecks = 0
+for (const preset of PRESETS) {
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    const side = analyzeBackdrops(surfaces)
+    const surfaceEdge =
+      side === 'light'
+        ? Math.min(...surfaces.map(luminance))
+        : Math.max(...surfaces.map(luminance))
+    for (const key of ['ink', 'inkDimmed', 'inkSecondary', 'inkTertiary', 'inkCaption', 'icon']) {
+      const value = luminance(neutral[key])
+      const onFarSide =
+        side === 'light' ? value < surfaceEdge : value > surfaceEdge
+      if (!onFarSide) {
+        bad(
+          `预设 ${preset.id}.${mode} 的墨色种子 ${key}（亮度 ${value.toFixed(3)}）没有落在` +
+            `表面的另一侧（表面边缘 ${surfaceEdge.toFixed(3)}，${side} 侧）——` +
+            `求解器的二分搜索会越过背景自身，单调性不成立`
+        )
+      }
+      directionChecks += 1
+    }
+  }
+}
+ok(`求解前提：${directionChecks} 个墨色种子全部落在所属表面的另一侧，二分搜索的单调性成立`)
+
+// ---- 断言 J：自指约束的实际余量 ----
+//
+// 强调色的自指淡染层（Tag 语气、侧边选中底、徽标底）由强调色自己派生，
+// 求解迭代两轮收敛。契约只钉了其中两支；这里把**全部**派生命中率算一遍，
+// 要求最低的一支也真的达标 ——「解过了」不等于「每一处都解到位了」。
+// 比例必须与 presets.js 的 TINTS 一致，且**分明暗**：
+// 浅色用 0.10/0.13/0.12，深色用 0.10/0.16/0.18。
+// 把深色的 0.18 也套到浅色上会算出 4.28 这种不存在的失败 —— 这一版真的踩过。
+const SELF_REF_WASHES = {
+  light: [0.1, 0.13, 0.12],
+  dark: [0.1, 0.16, 0.18]
+}
+let selfRefWorst = { ratio: Infinity, where: '' }
+let selfRefChecks = 0
+for (const preset of PRESETS) {
+  for (const accent of ACCENTS) {
+    const tokens = buildTokens({
+      enabled: true,
+      preset: preset.id,
+      accent: accent.id,
+      radius: 'standard',
+      corner: CORNER_SHAPES[1].id,
+      ambient: true,
+      motion: true,
+      typography: true,
+      glass: true
+    })
+    for (const mode of ['light', 'dark']) {
+      const accentColor = tokens['--dsw-alias-brand-primary'][mode]
+      for (const surface of surfaceColors(preset.neutral[mode])) {
+        for (const wash of SELF_REF_WASHES[mode]) {
+          const layer = tint(surface, accentColor, wash)
+          const ratio = contrast(accentColor, layer)
+          selfRefChecks += 1
+          if (ratio < selfRefWorst.ratio) {
+            selfRefWorst = {
+              ratio,
+              where: `${preset.id}/${accent.id}/${mode} 淡染 ${wash} on ${surface}`
+            }
+          }
+        }
+      }
+    }
+  }
+}
+if (selfRefWorst.ratio < AA) {
+  bad(
+    `强调色压在自己的淡染层上只有 ${selfRefWorst.ratio.toFixed(3)}（目标 ${AA}）—— ${selfRefWorst.where}`
+  )
+} else {
+  ok(
+    `自指约束：全部 ${selfRefChecks} 条派生命中率最低 ${selfRefWorst.ratio.toFixed(2)}（≥AA），最紧的是 ${selfRefWorst.where}`
+  )
 }
 
 // -------------------------------------------------------------------- 结论

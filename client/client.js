@@ -308,12 +308,53 @@ function solveColor(color, requirements) {
     list.every((item) => contrast(candidate, item.against) >= item.target)
   if (passes(base)) return base
 
-  const directions = new Set(
-    list.map((item) => (luminance(item.against) > LIGHT_SIDE_THRESHOLD ? 'darken' : 'lighten'))
-  )
-  if (directions.size > 1) return null
+  /**
+   * 方向由**哪一端真的够得着目标**决定，而不是由背景落在阈值哪一侧决定。
+   *
+   * v1.2 用的是 `luminance(against) > 0.4 ? 压暗 : 提亮`。那是一条**有死区的规则**：
+   * 背景亮度落在 (0.183, 0.4] 之间时它选「提亮」，而提亮最多只能到
+   * `1.05 / (L + 0.05)` —— 对 L = 0.3 只有 3.0，永远够不到 4.5；同一时刻压暗
+   * 却能到 7.0。于是求解器对一个**有解**的约束返回 `null`：
+   *
+   *   solveColor('#808080', [{ against: '#a8a8a8', target: 4.5 }])   // v1.2 → null
+   *
+   * 现在的判据是两端各自的**可达上限**：压暗到纯黑给 `(L + 0.05) / 0.05`，
+   * 提亮到纯白给 `1.05 / (L + 0.05)`。哪一端够得着就往哪端走；两端都够不着 →
+   * 无解；两端都够得着 → 回到「背景落在哪一侧」做平局判定（保留原来的取向，
+   * 只是它不再独占决策权）。
+   *
+   * 对当前全部输入，两种算法给出同一个方向（极亮的底只有压暗能到 4.5，
+   * 极暗的底只有提亮能到），因此这是一处**只修死区、不改现状**的改动；
+   * `tests/runtime.test.mjs` 有一条用上面那个最小复现钉住它。
+   */
+  const reachable = (item, direction) => {
+    const background = luminance(item.against)
+    const best =
+      direction === 'darken'
+        ? (background + 0.05) / 0.05
+        : 1.05 / (background + 0.05)
+    return best >= item.target
+  }
+  let needDarken = false
+  let needLighten = false
+  let bothAllowedEverywhere = true
+  for (const item of list) {
+    const byDarken = reachable(item, 'darken')
+    const byLighten = reachable(item, 'lighten')
+    // 两端都够不着：这条约束本身就无解，任何方向都不会成功
+    if (!byDarken && !byLighten) return null
+    if (!byLighten) needDarken = true
+    if (!byDarken) needLighten = true
+    if (!(byDarken && byLighten)) bothAllowedEverywhere = false
+  }
+  // 同时存在「只能压暗」与「只能提亮」→ 方向冲突，无解。
+  // 严格说中调色偶尔能同时满足两端，但那要求候选解越过背景自身的明度 ——
+  // 正是二分搜索不成立的那段区间，因此按无解处理、交由构建期断言暴露。
+  if (needDarken && needLighten) return null
+  const darken = bothAllowedEverywhere
+    ? list.every((item) => luminance(item.against) > LIGHT_SIDE_THRESHOLD)
+    : needDarken
 
-  const darken = directions.has('darken')
   const { h, s, l } = toHsl(base)
   let lo = darken ? 0 : l
   let hi = darken ? l : 1
@@ -388,6 +429,9 @@ const AA = 4.5
 
 /** WCAG 1.4.11：非文字（图标、边框、控件状态）。 */
 const NON_TEXT = 3
+
+/** WCAG AAA：正文文字。瞬态底（悬停 / 按下）上的主文字退到这条线，见 `hover-primary`。 */
+const AAA = 7
 
 /**
  * 中性文字阶梯的目标对比度。
@@ -465,16 +509,157 @@ const SYNTAX_TOKENS = Object.freeze([
  * 插件**有意不覆盖**、契约却要评估的宿主令牌，取官方基准值。
  *
  * 每条都注明了出处与「为什么不覆盖」。宿主升级后由 check.mjs 的断言提示复核。
+ *
+ * ## 这些取值不是手抄的
+ * v1.2 的注释写着「check.mjs 有一条断言把 fallback 与宿主基准表逐条比对」——
+ * **那句话是假的**：当时的 `reference/host-tokens.json` 只记名字、不记取值，
+ * 断言也只校验了「名字在表里」。于是 `--dsw-alias-button-contrast-fill` 一路写着
+ * `#54555780`（那是 `button-tool-bar-fill` 的值），而宿主的真实取值是
+ * `#61666b`（浅色）/ `#f9fafb`（深色）—— 一条既没被任何配对引用、取值又是错的声明。
+ *
+ * v1.3 补上了缺的那一半：`scripts/audit-consumers.mjs` 现在把宿主**声明过的取值**
+ * 一并索引进 `reference/host-consumers.json`，check.mjs 把下面这张表与它逐条比对
+ * （含一层 `var()` 解析）。这张表现在真的是一份可被机器核对的声明。
  */
 const HOST_FALLBACK = Object.freeze({
   // 主按钮文字 / 开关滑块 / StateDot 勾选共用；官方 = 纯白（浅色）/ 近黑（深色）。
   // 插件改为让强调色足够深（浅色）或足够亮（深色）来满足它，而不动这个令牌。
   '--dsw-alias-label-primary-foreground': Object.freeze({ light: '#ffffff', dark: '#0f1115' }),
-  // 灯箱关闭按钮等「浮在照片上」的控件用；官方 = 半透明深色。
-  '--dsw-alias-button-contrast-fill': Object.freeze({ light: '#54555780', dark: '#54555780' })
+  // 图片缩略图右上角那个「移除」小圆钮的底色（`AttachmentPreview` 系列的内联样式）。
+  // 官方浅色 bluish-700 = #61666b、深色 bluish-50 = #f9fafb；压在上面的字是
+  // label-primary-inverted。这一条在 v1.2 里取值写错且无人引用，v1.3 修好并接上配对。
+  '--dsw-alias-button-contrast-fill': Object.freeze({ light: '#61666b', dark: '#f9fafb' })
+})
+
+/**
+ * 宿主**从未声明**、却真的在被消费的令牌 —— 插件把它们补上。
+ *
+ * 与 `HOST_FALLBACK` 正好相反：那里是「宿主声明了、插件不覆盖」，这里是
+ * 「宿主没声明、插件必须补」。两者都是**声明**，都必须能被机器复核：
+ *
+ *   · `HOST_FALLBACK` 的取值由 `reference/host-consumers.json` 里宿主**声明过的
+ *     取值**逐条比对（v1.2 只在注释里声称比对了，其实比不了）；
+ *   · 这张表里的令牌必须真的「有消费者、零声明」—— 索引说它被声明过，
+ *     这里就该删掉；索引里根本没有它的消费者，说明这条补丁是多余的。
+ *
+ * ## 缺失的后果为什么值得单独一类
+ * 自定义属性没有「默认值」这一说：`color: var(--dsw-alias-label-error)` 在
+ * 计算值阶段变成 guaranteed-invalid，于是 `color` 按 `unset` 处理 ——
+ * 对可继承属性就是**继承**。屏幕上不会报错，只会有一行本该是红色的提示
+ * 和普通文字长得一模一样。这与 v1.0 修的「点 ✕ 关掉程序」同属一类：
+ * 宿主漏了一格，用户承担后果。
+ */
+const HOST_GAPS = Object.freeze({
+  '--dsw-alias-label-error': Object.freeze({
+    reason:
+      '设置表单的保存失败提示（`settings-form__SettingsForm.module.css` 的 `.failed`）' +
+      '以及编译产物里的 `._failed_ft7vz_23` 都写着 `color: var(--dsw-alias-label-error)`，' +
+      '而这个令牌在宿主的任何一处都没有声明 —— 提示文字因此继承正文墨色，' +
+      '「保存失败」在视觉上与普通说明没有区别。'
+  }),
+  '--dsw-alias-bg-layer-4': Object.freeze({
+    reason:
+      '表面阶梯的第四级。`settings-form__fields.module.css` 的帮助按钮写着' +
+      '`.helpButton:hover { background: var(--dsw-alias-bg-layer-4) }`，' +
+      '而宿主只声明到第三级 —— 悬停底色落到 initial（transparent），' +
+      '那个「?」按钮于是没有任何悬停反馈。'
+  })
+})
+
+/**
+ * 插件**有意不覆盖**、宿主确实当文字色消费的令牌。
+ *
+ * 与 `UNCOVERED` 的分工：`UNCOVERED` 是「覆盖了但不做断言」，
+ * 这里是「压根不覆盖，理由如下」。两者都会在 check.mjs 里被核对，
+ * 因此不会退化成一堆没人读的注释。
+ */
+const DELIBERATE = Object.freeze({
+  '--dsw-alias-state-idle-primary': Object.freeze({
+    reason:
+      '宿主唯一的消费者是 StateDot 的 `[data-state=idle]`：一个 6px 的「空闲」状态点，' +
+      '官方浅色只有 1.5:1 —— 那是**有意的弱化**，让待处理事项退到背景里。' +
+      '语义色的另外三支（成功 / 警告 / 危险）都被插件接管了，唯独这一支保持原样：' +
+      '把它抬到非文字档的 3:1，会让「待处理」比「进行中」还显眼，' +
+      '正好拆掉插件自己在任务列表里搭的三态阶梯。'
+  })
+})
+
+/**
+ * 插件覆盖了、宿主也确实当文字色消费，但**有意不纳入契约**的令牌。
+ *
+ * 这是 v1.3 新增的一类声明，与 `HOST_FALLBACK` 正好相反：那里是「不覆盖但要评估」，
+ * 这里是「覆盖了但不评估」。它存在的理由是 v1.2 自己写下的那句教训 ——
+ * **断言的覆盖面本身才是最容易被忽略的东西**。有了宿主消费点索引之后，
+ * 「某个被覆盖的令牌被当文字用、却不在契约里」成为一条可枚举的事实；
+ * 而这条事实必须被**处理**：要么补进契约，要么在这里写明为什么不用。
+ *
+ * 漏写会被 check.mjs 挡住，所以这张表不会随时间漂移成一份过时清单。
+ * 每条都必须给出 `reason`，断言还会校验这些令牌**真的**被覆盖、
+ * **真的**没进契约、**真的**有文字消费者 —— 否则它又变成一段没人读的注释。
+ */
+const UNCOVERED = Object.freeze({
+  '--dsw-alias-border-l4': Object.freeze({
+    reason:
+      '宿主的 `color: var(--dsw-alias-border-l4)` 出现在 `.cardWorkspaceTrigger:after`，' +
+      '而那条规则里同时写着 `border: 1px dashed`（不带颜色）—— 它借 currentColor 给' +
+      '虚线边框上色，不是文字。它本来就是描边档，而插件这一档比官方更强' +
+      '（浅色 20% 不透明度 vs 官方 16%），不存在变差。'
+  })
 })
 
 /** 宿主代码着色（`theme/shiki.css`）—— 插件**现在**接管它，因此不再是 fallback。 */
+
+/**
+ * 一个令牌被两个方向相反的角色同时占用、**无法用一支颜色同时满足**的配对。
+ *
+ * ## 为什么需要这一类，而不是「悄悄不写这条配对」
+ * v1.2 的教训是「一条永远不可能失败的断言，和没有断言是一回事」。
+ * 它的对偶同样成立：**一条被悄悄省掉的配对，和「这里没问题」是一回事** ——
+ * 下一个人读契约时，看到的是「该覆盖的都覆盖了」。
+ *
+ * 因此省掉的部分必须写下来，而且**「为什么省掉」本身要能被机器复核**：
+ * `scripts/check.mjs` 会断言 `sharp` 与 `soft` 两个落点分处明暗两侧 ——
+ * 也就是求解器无论如何都会给出 `null`（它的方向逻辑只支持「全部变暗」或
+ * 「全部变亮」）。哪天有人把轻提示的底改成浅色，那条断言会立刻失败并说
+ * 「这个矛盾已经不成立了，请把配对写回契约」。
+ *
+ * ## 这一条的具体内容
+ * `--dsw-alias-state-success-primary`（以及 `-warn-label`）在浅色主题下被用在两处，
+ * 而两处的方向相反：
+ *
+ *   1. **浅色表面上的正文** —— Tag 的成功/警告语气、差异视图的新增/删除行。
+ *      白底要求它够**深**（相对亮度 ≤0.165）。
+ *   2. **轻提示上的状态图标** —— 宿主的提示底在**两种主题里都是深色**
+ *      （`Toast.module.css` 自己写了这句话：「The design platform's toast surface
+ *      is dark in BOTH themes」）。深底要求它够**亮**（≥0.153）。
+ *
+ * 两个窗口几乎不重叠，而且第一个窗口的上界还随「淡染层由自己派生」这条自指约束
+ * 一起往下压 —— 可行的明度带被压到千分之几，且纸感的底一暖就直接为负。
+ * 这不是「色没调好」，是**一个令牌承担不了两个相反的角色**。
+ *
+ * 插件的取舍按「信息量」下：Tag 与差异行是**正文**（4.5 是硬线，出现频率也高得多），
+ * 轻提示的图标是**冗余的状态字形**（同一行的文字已经说明了结果，按 1.4.11 只需 3:1）。
+ * 因此解向角色 1；角色 2 在浅色下记为已知取舍，在深色下**照常进契约**
+ * （那里的底比表面更暗得有限，两个要求同向，可以同时满足）。
+ */
+const INFEASIBLE = Object.freeze([
+  Object.freeze({
+    id: 'toast-success-icon',
+    label: '轻提示 · 成功图标（浅色）',
+    fg: '--dsw-alias-state-success-primary',
+    mode: 'light',
+    sharp: Object.freeze({ against: '--dsw-alias-bg-layer-1', target: AA }),
+    soft: Object.freeze({ against: '--dsw-alias-toast-bg', target: NON_TEXT })
+  }),
+  Object.freeze({
+    id: 'toast-warn-icon',
+    label: '轻提示 · 警告图标（浅色）',
+    fg: '--dsw-alias-state-warn-label',
+    mode: 'light',
+    sharp: Object.freeze({ against: '--dsw-alias-bg-layer-1', target: AA }),
+    soft: Object.freeze({ against: '--dsw-alias-toast-bg', target: NON_TEXT })
+  })
+])
 
 /**
  * 契约条目。
@@ -560,7 +745,130 @@ const PAIR_LIST = [
   { id: 'input-placeholder', label: '输入框占位文字', fg: '--dsw-alias-label-dimmed', bg: '--dsw-specific-input-major', min: AA, kind: 'text' },
 
   // ---- 选区 ----
-  { id: 'selection-text', label: '选区上的正文', fg: '--dsw-alias-label-primary', bg: '--dsw-alias-bg-document-selection', min: AA, kind: 'text' }
+  { id: 'selection-text', label: '选区上的正文', fg: '--dsw-alias-label-primary', bg: '--dsw-alias-bg-document-selection', min: AA, kind: 'text' },
+
+  // ================================================================
+  // v1.3：语义色（成功 / 警告 / 危险）与差异视图
+  //
+  // 这一族是 v1.2 最大的遗漏，而且漏得很有说服力：Tag 的 **info** 语气
+  // （`color-mix(business-primary 10%)` + `color: business-primary`）在 v1.2 里
+  // 被认真求解过，而同一张样式表里、**隔三行的兄弟规则** ——
+  // success 10%、warning 12%、danger 10%，形状一模一样 —— 一条都没被算。
+  // 于是「通过」徽标在浅色下只有 2.06:1、「+ 新增行」的正文只有 1.91:1。
+  //
+  // 这三条配对的形状与 `tag-info` 完全一致（自指淡染层），阈值也一样，
+  // 差别只在于它们压的是宿主的语义色而不是强调色。
+  // ================================================================
+  { id: 'tag-success', label: 'Tag success 语气', fg: '--dsw-alias-state-success-primary', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text', tintOf: '--dsw-alias-state-success-primary', tintAmount: 0.1 },
+  { id: 'tag-warn', label: 'Tag warning 语气', fg: '--dsw-alias-state-warn-primary', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text', tintOf: '--dsw-alias-state-warn-primary', tintAmount: 0.12 },
+  { id: 'tag-error', label: 'Tag danger 语气', fg: '--dsw-alias-state-error-primary', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text', tintOf: '--dsw-alias-state-error-primary', tintAmount: 0.1 },
+
+  // ConnectionIndicator：`.success / .warning` 都是「淡底 + 同色文字」，
+  // 底色由 tertiary 承担（插件把它派生成语义色在表面上的淡染层）。
+  { id: 'conn-success', label: '连接指示 · 成功', fg: '--dsw-alias-state-success-primary', bg: '--dsw-alias-state-success-tertiary', min: AA, kind: 'text' },
+  { id: 'conn-warn', label: '连接指示 · 警告', fg: '--dsw-alias-state-warn-label', bg: '--dsw-alias-state-warn-tertiary', min: AA, kind: 'text' },
+  // 悬停态是「往淡底里再掺 6% 语义色」—— 另一个底，同样要校验。
+  { id: 'conn-warn-hover', label: '连接指示 · 警告悬停', fg: '--dsw-alias-state-warn-label', bg: '--dsw-alias-state-warn-tertiary', min: AA, kind: 'text', tintOf: '--dsw-alias-state-warn-primary', tintAmount: 0.06 },
+
+  // Toast 的成功 / 警告图标与文字直接铺语义色，压在插件的轻提示底色上。
+  // **只在深色下成立**：浅色下这一对与同一支令牌的「Tag 正文」约束方向相反，
+  // 见下面 INFEASIBLE 的说明。`modes` 让这条约束只在自己的可行域里生效 ——
+  // 而不是把阈值调低到刚好能过（那是拿断言迁就结论）。
+  { id: 'toast-success', label: '轻提示 · 成功', fg: '--dsw-alias-state-success-primary', bg: '--dsw-alias-toast-bg', min: NON_TEXT, kind: 'non-text', modes: ['dark'] },
+  { id: 'toast-warn', label: '轻提示 · 警告', fg: '--dsw-alias-state-warn-label', bg: '--dsw-alias-toast-bg', min: NON_TEXT, kind: 'non-text', modes: ['dark'] },
+
+  // 差异视图：`.add / .del` 的正文压在「语义色淡染层」上，而那一层又是**半透明**
+  // 的，真正落在代码块底色上。因此 `over` 指明代理解析的落点 ——
+  // 少了它，契约会把淡染层合成到画布上，算出一个没人看得见的比值。
+  { id: 'diff-added-text', label: '差异 · 新增行正文', fg: '--dsw-alias-state-success-primary', bg: '--dsw-alias-code-diff-added', over: '--dsw-alias-markdown-code-block', min: AA, kind: 'text' },
+  { id: 'diff-deleted-text', label: '差异 · 删除行正文', fg: '--dsw-alias-state-error-primary', bg: '--dsw-alias-code-diff-deleted', over: '--dsw-alias-markdown-code-block', min: AA, kind: 'text' },
+
+  // 危险色当**文字**：设置表单的保存失败提示、菜单里的危险项。
+  { id: 'error-on-surface', label: '危险文字 on 表面', fg: '--dsw-alias-state-error-primary', bg: '--dsw-alias-bg-layer-2', min: AA, kind: 'text' },
+  { id: 'error-on-menu', label: '危险文字 on 菜单材质', fg: '--dsw-alias-state-error-primary', bg: '--dsw-menu-surface-fill', min: AA, kind: 'text' },
+  { id: 'error-on-canvas', label: '危险文字 on 画布', fg: '--dsw-alias-state-error-primary', bg: '--dsw-alias-bg-base', min: AA, kind: 'text' },
+
+  // 语义色的「柔和档」也被当文字用（shortcuts / plugin-manager 的内联样式），
+  // 因此它同样不能只按装饰处理。
+  { id: 'success-secondary', label: '成功（柔和档）on 表面', fg: '--dsw-alias-state-success-secondary', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+  { id: 'warn-secondary', label: '警告（柔和档）on 表面', fg: '--dsw-alias-state-warn-secondary', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+
+  // 危险色当**底色**：`.brokenBadge` 用它当徽标底，而字是 `bg-layer-3`。
+  // 这条是「宿主消费点索引」直接指出来的一对：索引之前，没人知道
+  // 语义色还要扛住一支表面色。
+  { id: 'error-badge-text', label: '危险徽标文字', fg: '--dsw-alias-bg-layer-3', bg: '--dsw-alias-state-error-primary', min: AA, kind: 'text' },
+
+  // 危险悬停底：菜单项悬停时铺 8% 危险色，正文压在其上。
+  { id: 'danger-hover-text', label: '危险悬停底上的正文', fg: '--dsw-alias-label-primary', bg: '--dsw-alias-interactive-bg-hover-danger', over: '--dsw-alias-bg-layer-2', min: AA, kind: 'text' },
+
+  // ================================================================
+  // v1.3：覆盖面缺口 —— 插件早就覆盖了、宿主也当文字用，却从没进过契约的令牌
+  //
+  // 这七条不是「新发现的配色问题」，而是**新发现的断言缺口**：它们由
+  // `scripts/audit-consumers.mjs` 从宿主真实样式与 bundle 里枚举出来
+  // （见 reference/host-consumers.json）。在此之前，没人知道
+  // `--dsw-alias-label-primary-dimmed` 会被当正文用。
+  // ================================================================
+  { id: 'text-primary-dimmed', label: '次级正文（dimmed）', fg: '--dsw-alias-label-primary-dimmed', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+  { id: 'text-primary-dimmed-canvas', label: '次级正文（dimmed）on 画布', fg: '--dsw-alias-label-primary-dimmed', bg: '--dsw-alias-bg-base', min: AA, kind: 'text' },
+  { id: 'text-primary-bluish', label: '蓝调主文字', fg: '--dsw-alias-label-primary-bluish', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+  // 反向文字：`background: label-primary` + `color: bg-layer-3`（Tag solid、构建号胶囊）
+  { id: 'label-inverted', label: '反向文字 on 墨色底', fg: '--dsw-alias-bg-layer-3', bg: '--dsw-alias-label-primary', min: AA, kind: 'text' },
+  // 同一支反向文字压在**缩略图上的半透明小圆钮**上（AttachmentPreview 的移除钮）。
+  // 它是 HOST_FALLBACK 里那条取值的唯一去处 —— 修好取值与接上配对是同一件事。
+  { id: 'label-inverted-photo', label: '反向文字 on 照片控件', fg: '--dsw-alias-label-primary-inverted', bg: '--dsw-alias-button-contrast-fill', min: AA, kind: 'text' },
+  // 文档预览：两支令牌都由插件接管，此前从未互相校验。
+  { id: 'document-preview-label', label: '文档预览文字', fg: '--dsw-alias-label-document-preview', bg: '--dsw-alias-bg-document-preview', min: AA, kind: 'text' },
+  // 设置里的「更新可用」指示与账户提示图标（三处 bundle 的内联样式）。
+  { id: 'brand-new-indicator', label: '更新指示文字', fg: '--dsw-alias-brand-primary-new-colorprimary-new-color', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+  // 设置表单里那个「?」帮助按钮：24px 的图标按钮，悬停时底色换成 `bg-layer-4`
+  // （**宿主从未声明**，见 presets.js 的宿主缺口修正），字形从 tertiary 提到 secondary。
+  // 按非文字档要求 —— 这是图标，不是文字（`.helpButton` 里没有文本节点）。
+  { id: 'help-button-hover', label: '帮助按钮悬停', fg: '--dsw-alias-label-secondary', bg: '--dsw-alias-bg-layer-4', min: NON_TEXT, kind: 'non-text' },
+  // 保存失败提示：宿主写的是 `color: var(--dsw-alias-label-error)`，
+  // 而这个令牌**从未被声明**（见 presets.js 的宿主缺口修正）。
+  { id: 'label-error', label: '错误提示文字', fg: '--dsw-alias-label-error', bg: '--dsw-alias-bg-layer-2', min: AA, kind: 'text' },
+
+  // ---- 悬停 / 按下：文字压在一个「会动的底」上 ----
+  // 宿主把 `--dsw-alias-interactive-bg-hover` 铺在文字底下（`Menu.module.css` 的
+  // `.item:hover`，同一行里还有 11px 的快捷键与标签文字）。契约此前只认平面表面，
+  // 于是这一整类底从未被算过：深色模式下强调色是亮色，12% 的罩层把深底提亮，
+  // 实测石墨 + 石墨灰 + 深色下 caption 掉到 **2.06**（目标 3）、tertiary **3.06**（4.5）。
+  // 修法是把这两层加进求解的输入集（见 presets.js 的 HOVER_WASH），
+  // 并把它们写进契约 —— 否则「解过了」和「断言过了」之间还是有一道缝。
+  { id: 'hover-caption', label: '说明文字 on 悬停底', fg: '--dsw-alias-label-caption', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-alias-bg-layer-2', min: TEXT_TIERS.caption, kind: 'text' },
+  { id: 'hover-tertiary', label: '三级文字 on 悬停底', fg: '--dsw-alias-label-tertiary', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-alias-bg-layer-2', min: TEXT_TIERS.tertiary, kind: 'text' },
+  { id: 'hover-secondary', label: '次级文字 on 悬停底', fg: '--dsw-alias-label-secondary', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-alias-bg-layer-2', min: TEXT_TIERS.secondary, kind: 'text' },
+  { id: 'hover-menu-caption', label: '菜单说明文字 on 悬停底', fg: '--dsw-alias-label-caption', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-menu-surface-fill', min: TEXT_TIERS.caption, kind: 'text' },
+  { id: 'hover-menu-tertiary', label: '菜单三级文字 on 悬停底', fg: '--dsw-alias-label-tertiary', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-menu-surface-fill', min: TEXT_TIERS.tertiary, kind: 'text' },
+  { id: 'active-menu-tertiary', label: '菜单三级文字 on 按下底', fg: '--dsw-alias-label-tertiary', bg: '--dsw-alias-interactive-bg-active', over: '--dsw-menu-surface-fill', min: TEXT_TIERS.tertiary, kind: 'text' },
+  { id: 'active-menu-caption', label: '菜单说明文字 on 按下底', fg: '--dsw-alias-label-caption', bg: '--dsw-alias-interactive-bg-active', over: '--dsw-menu-surface-fill', min: TEXT_TIERS.caption, kind: 'text' },
+
+  // 正文主力与次级正文在瞬态底上的底线。
+  //
+  // 这两级**解不到**自己那条高底线：罩层把深色底提亮之后，最亮的那层对纯白
+  // 也只有 9.8:1，而 primary 要 12、dimmed 要 9 —— 数学上不可能（见 presets.js
+  // 的 HOVER_WASH）。因此它们对平面表面求解、在瞬态底上退到下面两条线：
+  //
+  //   · primary：**AAA 的 7**。这是一条公认的外部标准，实测最低 8.29。
+  //     插件对稳态底的 12 是美术标准，不该假装它在瞬态底上也成立。
+  //   · dimmed：**下一级（secondary）的稳态底线 5.5**。理由不是「凑一个能过的数」，
+  //     而是一条结构约束 —— dimmed 在阶梯上高于 secondary，它在任何底上都不该
+  //     掉到 secondary 的底线以下，否则层级就读反了。实测最低 6.80。
+  //
+  // 两条阈值都写明了出处；改动配色把它们压下去，构建期就会响。
+  { id: 'hover-primary', label: '主文字 on 悬停底（AAA）', fg: '--dsw-alias-label-primary', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-alias-bg-layer-2', min: AAA, kind: 'text' },
+  { id: 'active-primary', label: '主文字 on 按下底（AAA）', fg: '--dsw-alias-label-primary', bg: '--dsw-alias-interactive-bg-active', over: '--dsw-alias-bg-layer-2', min: AAA, kind: 'text' },
+  { id: 'hover-dimmed', label: '次级正文 on 悬停底', fg: '--dsw-alias-label-primary-dimmed', bg: '--dsw-alias-interactive-bg-hover', over: '--dsw-alias-bg-layer-2', min: TEXT_TIERS.secondary, kind: 'text' },
+  { id: 'active-dimmed', label: '次级正文 on 按下底', fg: '--dsw-alias-label-primary-dimmed', bg: '--dsw-alias-interactive-bg-active', over: '--dsw-alias-bg-layer-2', min: TEXT_TIERS.secondary, kind: 'text' },
+
+  // ---- 思考态：扫光与底色的可分辨度 ----  // `.running` 把 `--dsw-alias-label-shimmer` 重指到 `-deep-diving-shimmer`，
+  // 而 TextShimmer 的扫光正是用这支颜色把正文再画一遍（遮罩成一条扫过的带）。
+  // 因此它与正文的可分辨度是一条真实约束；官方自己也只做到 1.6 左右（刻意的微光），
+  // 阈值因此取官方水平而不是更高 —— 与快捷键键帽那条同一个做法。
+  { id: 'think-shimmer', label: '思考扫光 vs 正文', fg: '--dsw-alias-label-deep-diving-shimmer', bg: '--dsw-alias-label-deep-diving', min: 1.5, kind: 'non-text' },
+  { id: 'think-label', label: '思考态标签 on 表面', fg: '--dsw-alias-label-deep-diving', bg: '--dsw-alias-bg-layer-1', min: AA, kind: 'text' },
+  { id: 'think-label-canvas', label: '思考态标签 on 画布', fg: '--dsw-alias-label-deep-diving', bg: '--dsw-alias-bg-base', min: AA, kind: 'text' }
 ]
 
 /** 语法 token 的契约条目按 token 列表生成，避免手抄九遍。 */
@@ -608,6 +916,12 @@ function readRef(tokens, ref, mode) {
  * 字压在自己的淡染层上，因此这是一处**自指**约束 —— 求解时必须一起考虑，
  * 否则强调色刚好落在「淡染后与自身几乎同色」的区间里（v1.1 就是这样）。
  *
+ * 支持 `over`：背景是**半透明**的一层，而它真正压在上面的不是画布，
+ * 是某个更具体的表面 —— 差异视图的 `.add / .del` 就是这种情况
+ * （`--dsw-alias-code-diff-added` 是 8% 的绿，落在代码块底色上，
+ * 而不是落在画布上）。少了它，契约会把淡染层合成到画布，
+ * 算出一个界面上并不存在的比值。
+ *
  * @returns `{ fg, bg }` 实色；任一侧取不到时返回 null。
  */
 function resolvePair(tokens, pair, mode, canvas) {
@@ -624,12 +938,20 @@ function resolvePair(tokens, pair, mode, canvas) {
   const rawBg = readRef(tokens, pair.bg, mode)
   if (rawBg === null) return null
   // 半透明的一方先合成到「它实际压在什么上」再算：直接拿 alpha 值算会高估。
-  const bg = composite(rawBg, canvas)
+  const underlay =
+    pair.over === undefined
+      ? canvas
+      : composite(readRef(tokens, pair.over, mode) ?? canvas, canvas)
+  const bg = composite(rawBg, underlay)
   return { fg: composite(rawFg, bg), bg }
 }
 
 /**
  * 评估一份令牌层在一个明暗下的可读性。
+ *
+ * `pair.modes` 可以限制一条配对只在某个明暗下成立：`INFEASIBLE` 里那些
+ * 「两个角色方向相反」的令牌就属于这种情况 —— 与其把阈值调低到刚好能过，
+ * 不如让约束只出现在它真正可行的那一侧。
  *
  * @param tokens - `buildTokens()` 的输出，或控制器**真正投射出去**的那一份。
  * @param mode - `'light' | 'dark'`。
@@ -646,6 +968,7 @@ function evaluate(tokens, mode) {
   const missing = []
 
   for (const pair of PAIRS) {
+    if (pair.modes !== undefined && !pair.modes.includes(mode)) continue
     const resolved = resolvePair(tokens, pair, mode, canvas)
     if (resolved === null) {
       const absent = readRef(tokens, pair.fg, mode) === null ? pair.fg : pair.bg
@@ -806,6 +1129,39 @@ const RADIUS_SCALES = [
     radii: { xs: 5, sm: 10, md: 14, lg: 21, xl: 26, panel: 36 },
     contentRadius: 21
   }
+]
+
+/**
+ * 圆角**形状**（与圆角半径正交的一条轴）。
+ *
+ * 宿主自带 `theme/corner_shape.css`：
+ *
+ *   @supports (corner-shape: superellipse(1.5)) {
+ *     :root { --dsw-corner-shape: superellipse(1.5) }
+ *     *, :before, :after { corner-shape: var(--dsw-corner-shape) }
+ *   }
+ *
+ * 也就是说官方在支持该属性的浏览器上把**所有**圆角都做成了方圆形
+ * （超椭圆，苹果那种「更饱满」的圆角），并把它交给一个令牌控制 ——
+ * 而 v1.2 从来没有碰过这个令牌。
+ *
+ * 这条轴与半径完全正交：半径决定「切多深」，形状决定「切口是什么曲线」。
+ * 三档里 `squircle` 就是官方的 `superellipse(1.5)`，因此**默认值不改变现有观感**；
+ * 另外两档才是有意的偏离。
+ *
+ * 为什么值得做成一个开关：`corner-shape` 是这两年的新属性，观感差异在
+ * 16–28px 的大圆角上非常明显（卡片、对话框、输入区），而「正圆 / 方圆形」
+ * 是一个真实的审美分歧点 —— 有人认为方圆形更「高级」，有人认为它「不够利落」。
+ * 插件不该替用户选，但应该把它变成一行可选项。
+ *
+ * 圆形按钮与胶囊不受影响：宿主的 StateDot / Pill / Switch / Tag / 滚动条滑块
+ * 都自己写了 `corner-shape: round`，那是刻意的（正圆才像圆），
+ * `scripts/check.mjs` 有一条断言把这件事钉在插件自己的样式表上。
+ */
+const CORNER_SHAPES = [
+  { id: 'round', name: '正圆', css: 'round' },
+  { id: 'squircle', name: '方圆形', css: 'superellipse(1.5)' },
+  { id: 'crisp', name: '硬朗', css: 'superellipse(2.4)' }
 ]
 
 /**
@@ -1266,6 +1622,16 @@ const TINTS = Object.freeze({
 const TOOLTIP_KEY_MIN = 2
 
 /**
+ * 思考态扫光朝画布退让的比例。
+ *
+ * 官方那一对（正文 / 扫光）的可分辨度是 1.6 上下 —— 它本来就是一道
+ * 「若有若无」的微光，因此这里不能按 3:1 去解，只能复刻那种强度。
+ * 42% 是实测能让 56 组组合都落在 1.5 以上、又不超过 3.0 的取值：
+ * 再小会让扫光与正文糊在一起，再大就成了一道真正的条纹。
+ */
+const THINK_SHIMMER_MIX = 0.42
+
+/**
  * 让一个文字色对**一整组**背景都达标。
  *
  * 文字不总是落在画布上：同一段灰字会出现在画布、卡片、代码块、侧栏上。
@@ -1445,6 +1811,135 @@ const HOST_SHIKI = Object.freeze({
 })
 
 /**
+ * 宿主 `design_platform.css` 的语义色，逐字节照抄。求解器以此为起点。
+ *
+ * ## 为什么语义色与强调色是两套，而且都不共用
+ * 强调色是**用户的身份色**（品牌、按钮、链接），语义色是**状态的语言**：
+ * 绿 = 成功、琥珀 = 警告、红 = 危险。后者的色相不是审美选择，而是一条被反复
+ * 学习的约定 —— 把「危险」换成紫色，界面就不再可信。
+ *
+ * 因此这里的处理与强调色**正好相反**：
+ *   · 强调色：色相由用户挑，明度由求解器决定（只保证读得出来）；
+ *   · 语义色：色相与饱和度锁死（约定不可动），只沿明度轴移动到读得出来。
+ * 两者都只动明度，但理由不同，`scripts/check.mjs` 也分别断言。
+ *
+ * ## 种子为什么是「宿主的两支」
+ * 宿主的语义色在浅色/深色两套里几乎相同（绿-500 与琥珀-500 两边都用），
+ * 只有危险色的浅色档用了更深的红-600。照抄宿主而不是自选，是为了让
+ * 「插件之前的界面」与「插件之后的界面」在同一套语言里 ——
+ * 用户看到的仍然是那个绿，只是终于读得出来了。
+ */
+const HOST_SEMANTIC = Object.freeze({
+  light: Object.freeze({
+    success: '#22c55e',
+    successSoft: '#4ed17e',
+    warn: '#f59e0b',
+    warnSoft: '#f7ad31',
+    error: '#ec1313',
+    errorSoft: '#f25a5a'
+  }),
+  dark: Object.freeze({
+    success: '#22c55e',
+    successSoft: '#4ed17e',
+    warn: '#f59e0b',
+    warnSoft: '#f7ad31',
+    error: '#f25a5a',
+    errorSoft: '#f25a5a'
+  })
+})
+
+/**
+ * 语义色的淡染比例，取自宿主 `Tag.module.css` 的原始注释：
+ * 「The tint is 10%, except `warning`, which keeps the 12%」。
+ * 这三个语气（success / warning / danger）与 v1.2 已经求解过的 `info` 语气
+ * 是同一张样式表里隔几行的兄弟规则，比例也照抄，唯一的改动是**把颜色解出来**。
+ */
+const SEMANTIC_WASH = Object.freeze({ success: 0.1, warn: 0.12, error: 0.1 })
+
+/** 差异视图的整行淡染比例，取自宿主 `--dsw-static-green-500-a08/a12`。 */
+const DIFF_WASH = Object.freeze({ light: 0.08, dark: 0.12 })
+
+/** 深色下调色板键名 → 语义族成员。 */
+const SEMANTIC_MEMBERS = Object.freeze([
+  ['success', 'successSoft'],
+  ['warn', 'warnSoft'],
+  ['error', 'errorSoft']
+])
+
+const semanticCache = new Map()
+
+/**
+ * 求解一个预设的语义色（四支：成功 / 警告 / 危险，各含一支「柔和档」）。
+ *
+ * ## 约束从哪来
+ * 与强调色同一个套路，但这次的**每一条都有消费者**：
+ *
+ *   1. **当文字**：压在全部表面色与画布上 —— `.failed` 的保存失败提示、
+ *      菜单里的危险项、（柔和档的）shortcuts / plugin-manager 内联样式；
+ *   2. **当文字，压在自己的淡染层上**：Tag 的 success / warning / danger 语气
+ *      （`color-mix(色 10%/12%, transparent)` + `color: 色`），这是一处**自指**约束，
+ *      因此与强调色一样迭代两轮；
+ *   3. **当底色**：`.brokenBadge` 把危险色铺成徽标底，字是 `--dsw-alias-bg-layer-3`
+ *      —— 也就是插件的 surface3。**只有危险色有这条消费者**，所以只有它带这条约束：
+ *      给成功与警告加一条不存在的需求，只会让它们的明度被推着走。
+ *
+ * 轻提示上的那一对**不在**约束里，也解不出来 —— 见 `readability.js` 的 INFEASIBLE。
+ *
+ * @param preset - 预设条目（提供表面色与画布）。
+ * @returns `{ light, dark }`，每侧含 `success/successSoft/warn/warnSoft/error/errorSoft`。
+ */
+function solveSemantic(preset) {
+  const cacheKey = preset.id
+  const hit = semanticCache.get(cacheKey)
+  if (hit !== undefined) return hit
+
+  const out = {}
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    const all = [...surfaces, neutral.canvas]
+    const seeds = HOST_SEMANTIC[mode]
+    const result = {}
+
+    for (const [base, soft] of SEMANTIC_MEMBERS) {
+      const wash = SEMANTIC_WASH[base]
+      let color = seeds[base]
+      for (let pass = 0; pass < 2; pass += 1) {
+        const layers = all.map((surface) => tint(surface, color, wash))
+        const requirements = [
+          // 1. 当文字：压在全部表面与画布上
+          ...all.map((surface) => ({ against: surface, target: AA })),
+          // 菜单材质是半透明的，落点仍以画布计
+          { against: neutral.menu, target: AA },
+          // 2. 当文字：压在自己的淡染层上（自指，留余量）
+          ...layers.map((layer) => ({ against: layer, target: AA + SELF_REFERENTIAL_MARGIN }))
+        ]
+        // 3. 当底色：只有危险色有这条消费者（.brokenBadge）
+        if (base === 'error') {
+          requirements.push({ against: neutral.surface3, target: AA })
+        }
+        const solved = solveColor(color, requirements)
+        if (solved === null) break
+        color = solved
+      }
+      result[base] = color
+      // 柔和档：宿主的 green-400 / amber-400 是「同色相、更低饱和度」的一档，
+      // 它同样被当文字用（shortcuts / plugin-manager），所以也解到 AA。
+      // 一次把全部约束交给求解器 —— 逐个表面反复调用会让前一个表面的结论
+      // 被后一个表面推翻（最后一次调用说了算），那是错的。
+      result[soft] =
+        solveColor(
+          seeds[soft],
+          all.map((surface) => ({ against: surface, target: AA }))
+        ) ?? seeds[soft]
+    }
+    out[mode] = result
+  }
+  semanticCache.set(cacheKey, out)
+  return out
+}
+
+/**
  * 面板色板要显示的颜色 —— **求解后**的取值，而不是配色表里的原始值。
  *
  * 为什么必须求解后再显示：求解会沿明度轴微调强调色（最多约 11%），如果色板画的是
@@ -1472,6 +1967,7 @@ function buildTokens(state) {
   const preset = PRESETS.find((p) => p.id === state.preset) ?? PRESETS[0]
   const accentEntry = ACCENTS.find((a) => a.id === state.accent) ?? ACCENTS[0]
   const radius = RADIUS_SCALES.find((r) => r.id === state.radius) ?? RADIUS_SCALES[1]
+  const corner = CORNER_SHAPES.find((c) => c.id === state.corner) ?? CORNER_SHAPES[1]
   const L = preset.neutral.light
   const D = preset.neutral.dark
   const SL = preset.shadow.light
@@ -1482,32 +1978,81 @@ function buildTokens(state) {
    * 手写取值只提供色相与饱和度，明度由求解器按可读性契约决定 —— 见 `solveAccent`。
    */
   const accent = solveAccent(accentEntry, preset)
+  const semantic = solveSemantic(preset)
   const syntax = solveSyntax(HOST_SHIKI, preset)
 
   /**
    * 文字阶梯也过一遍求解：四个预设的墨色是美术选择，但「三级文字能不能读」
    * 不该由美术选择决定。实测石墨与纸感的浅色下三级文字只有 3.65 / 3.88，
    * 比官方基线（3.71）还低 —— 求解器把它们抬到 AA。
+   *
+   * ## v1.3：把「悬停淡染层」也算进去
+   * 这一族此前只对**平面**表面求解，而宿主动辄把 `--dsw-alias-interactive-bg-hover`
+   * 铺在文字底下（`Menu.module.css` 的 `.item:hover`，行里还有 11px 的
+   * `.shortcutKeys` 与 `.label`）。深色模式下强调色是亮色，那层 12% 的罩层把
+   * 深底**提亮**，于是同一段灰字的有效底变亮了：
+   *
+   *   石墨 + 石墨灰 + 深色，卡片上的 caption 从 3.x 掉到 **2.06**（目标 3）、
+   *   tertiary 掉到 **3.06**（目标 4.5）—— 全 1680 组「文字 × 悬停底」里
+   *   **969 组低于自己的档位**。
+   *
+   * 这是「契约的输入集少了一类底」的典型：不是算错，是没算 —— 与 v1.2 漏掉
+   * 输入框占位文字、v1.3 漏掉语义色是同一类。修法是把这两层加进 `all`，
+   * 让整支阶梯在**它真正会落在的所有底**上都达标。
+   *
+   * ## 哪几级进得了这个约束集，是算出来的，不是挑出来的
+   * 罩层把深色底**提亮**，于是「最亮的那支墨还能不能达标」变成一条算术题：
+   * 底越亮，纯白能拿到的对比度越低。实测最亮的那层（surface3 + 按下罩层）
+   * 相对亮度 0.057，**纯白对它也只有 9.8:1** —— 于是：
+   *
+   *   · tertiary(4.5) / caption(3) / secondary(5.5) / icon(3)：可行，纳入；
+   *   · primary(12) 与 dimmed(9)：**数学上不可行**（12 需要底 ≤0.0375）。
+   *
+   * 这两级因此保持「对平面表面求解」：它们的高底线是稳态界面的美术标准，
+   * 而不是一个瞬态底色上的承诺。悬停时它们仍然读得出来（实测最低 8.6:1，
+   * 高于 AAA 的 7），只是不再满足插件自定的 12 —— `scripts/check.mjs`
+   * 会把这个实测值连同它的来源一起钉住，而不是让这条界线消失在注释里。
    */
+  const HOVER_WASH = { light: 0.08, dark: 0.12 }
+  const ACTIVE_WASH = { light: 0.14, dark: 0.2 }
   const neutralText = {}
   for (const mode of ['light', 'dark']) {
     const neutral = preset.neutral[mode]
     const surfaces = surfaceColors(neutral)
     const canvas = neutral.canvas
-    const all = [...surfaces, canvas]
+    const accentColor = accent[mode]
+    const flat = [...surfaces, canvas]
+    /** 悬停 / 按下时文字真正压在什么上：强调色罩层合成到每一支平面底上。 */
+    const washed = flat.flatMap((surface) => [
+      tint(surface, accentColor, HOVER_WASH[mode]),
+      tint(surface, accentColor, ACTIVE_WASH[mode])
+    ])
+    const transient = [...flat, ...washed]
     neutralText[mode] = {
-      ink: ensureContrast(neutral.ink, canvas, TEXT_TIERS.primary),
-      inkDimmed: ensureContrastAllSurfaces(neutral.inkDimmed, all, TEXT_TIERS.dimmed),
-      inkSecondary: ensureContrastAllSurfaces(neutral.inkSecondary, all, TEXT_TIERS.secondary),
-      inkTertiary: ensureContrastAllSurfaces(neutral.inkTertiary, all, TEXT_TIERS.tertiary),
-      inkCaption: ensureContrastAllSurfaces(neutral.inkCaption, all, TEXT_TIERS.caption),
+      ink: solveTone(neutral.ink, flat, TEXT_TIERS.primary),
+      inkDimmed: ensureContrastAllSurfaces(neutral.inkDimmed, flat, TEXT_TIERS.dimmed),
+      inkSecondary: ensureContrastAllSurfaces(
+        neutral.inkSecondary,
+        transient,
+        TEXT_TIERS.secondary
+      ),
+      inkTertiary: ensureContrastAllSurfaces(
+        neutral.inkTertiary,
+        transient,
+        TEXT_TIERS.tertiary
+      ),
+      inkCaption: ensureContrastAllSurfaces(
+        neutral.inkCaption,
+        transient,
+        TEXT_TIERS.caption
+      ),
       // 占位文字（`--dsw-alias-label-dimmed`）是**正文**，不是描边：
       // 宿主唯一的消费者是 `.input::placeholder`，14px。v1.1 把它绑在描边色上，
       // 实测只有 1.48–2.00:1。这里从说明文字那支墨出发解到 AA ——
       // 从 inkCaption 起步而不是 inkTertiary，是为了让占位文字比三级文字淡一点，
-      // 保持「提示 < 正文」的层级感。
-      placeholder: ensureContrastAllSurfaces(neutral.inkCaption, all, AA),
-      icon: ensureContrastAllSurfaces(neutral.icon, all, NON_TEXT)
+      // 保持「提示 < 正文」的层级感。输入框不会悬停变色，因此仍按平面底求解。
+      placeholder: ensureContrastAllSurfaces(neutral.inkCaption, flat, AA),
+      icon: ensureContrastAllSurfaces(neutral.icon, transient, NON_TEXT)
     }
   }
 
@@ -1635,6 +2180,121 @@ function buildTokens(state) {
   tokens['--dsw-alias-link'] = t(accent.light, accent.dark)
   tokens['--dsw-focus-ring-color'] = t(accent.light, accent.dark)
   tokens['--dsw-alias-label-deep-diving'] = t(accent.light, accent.dark)
+  // 思考态的**扫光**：宿主把 `--dsw-alias-label-shimmer` 在这一处重指到
+  // `-deep-diving-shimmer`（`.running { --dsw-alias-label-shimmer: var(...-deep-diving-shimmer);
+  // color: var(...-deep-diving) }`），TextShimmer 再用它把正文**再画一遍**、
+  // 遮罩成一条扫过的带。因此它是「同一个色相的两个明度」，
+  // v1.2 只接管了其中一支（正文 = 强调色），扫光留在宿主的蓝上 ——
+  // 非蓝强调色下，扫光颜色不属于用户选的那套配色。
+  // 现在两支同源：扫光 = 强调色朝画布方向退一段，退到与正文刚好可分辨（≥1.5，
+  // 官方自己那一对是 1.6 上下 —— 它本来就是一道若有若无的微光）。
+  tokens['--dsw-alias-label-deep-diving-shimmer'] = t(
+    tint(accent.light, L.canvas, THINK_SHIMMER_MIX),
+    tint(accent.dark, D.canvas, THINK_SHIMMER_MIX)
+  )
+
+  // ---- 语义色（成功 / 警告 / 危险）---------------------------------------
+  // 这是 v1.3 的主题。v1.2 把强调色解了出来，却把**同一张样式表里隔三行的
+  // 兄弟规则**整族留给了宿主：Tag 的 info 语气被求解，success/warning/danger
+  // 三个语气一条没算；差异视图的 `.add` 正文实测只有 **1.91:1**。
+  // 理由与做法见 solveSemantic —— 色相锁死、只动明度。
+  //
+  // 这里**没有开关**：它不是一种「口味」，而是一处与 v1.2 同类（甚至更明显）的
+  // 可读性缺陷 —— 「通过」徽标的正文、差异视图的新增行正文，都是要被读的内容。
+  // v1.2 也没有为「把字解到达标」提供开关。
+  tokens['--dsw-alias-state-success-primary'] = t(
+    semantic.light.success,
+    semantic.dark.success
+  )
+  // 淡染层：与 Tag 的 `color-mix(色 10%, transparent)` 同源，
+  // 只是把它落成实色（宿主把它当 ConnectionIndicator 的底）。
+  tokens['--dsw-alias-state-success-tertiary'] = t(
+    tint(L.surface1, semantic.light.success, SEMANTIC_WASH.success),
+    tint(D.surface1, semantic.dark.success, SEMANTIC_WASH.success)
+  )
+  tokens['--dsw-alias-state-success-secondary'] = t(
+    semantic.light.successSoft,
+    semantic.dark.successSoft
+  )
+  tokens['--dsw-alias-state-warn-primary'] = t(semantic.light.warn, semantic.dark.warn)
+  tokens['--dsw-alias-state-warn-tertiary'] = t(
+    tint(L.surface1, semantic.light.warn, SEMANTIC_WASH.warn),
+    tint(D.surface1, semantic.dark.warn, SEMANTIC_WASH.warn)
+  )
+  // 宿主的 label 与 primary 是两支琥珀（600 / 500）。插件的求解已经保证了
+  // 「同色相 + 压得住自己的淡染层」，再分两支只会让它们各自解到不同明度、
+  // 于是在连接指示里同时出现两种琥珀。合成一支 —— 一个状态一个颜色。
+  tokens['--dsw-alias-state-warn-label'] = t(semantic.light.warn, semantic.dark.warn)
+  tokens['--dsw-alias-state-warn-secondary'] = t(
+    semantic.light.warnSoft,
+    semantic.dark.warnSoft
+  )
+  tokens['--dsw-alias-state-error-primary'] = t(semantic.light.error, semantic.dark.error)
+  tokens['--dsw-alias-state-error-secondary'] = t(
+    semantic.light.errorSoft,
+    semantic.dark.errorSoft
+  )
+  // `--dsw-alias-state-idle-primary` **刻意不接管**：它是「待处理」状态点的
+  // 弱化档，宿主的 1.5:1 是有意为之。理由写在 readability.js 的 UNCOVERED。
+
+  // 差异视图的整行淡染：宿主用的是 8%（浅色）/ 12%（深色）的 alpha 绿红，
+  // 由浏览器合成在半透明层上。这里保持同样的语义（一层随底色走的淡染），
+  // 只把颜色换成求解后的语义色 —— 于是 `.add` 的正文终于对得上它的底。
+  tokens['--dsw-alias-code-diff-added'] = t(
+    alpha(semantic.light.success, DIFF_WASH.light),
+    alpha(semantic.dark.success, DIFF_WASH.dark)
+  )
+  tokens['--dsw-alias-code-diff-deleted'] = t(
+    alpha(semantic.light.error, DIFF_WASH.light),
+    alpha(semantic.dark.error, DIFF_WASH.dark)
+  )
+  // 文件级差异：整块底、行号槽、左侧标记。宿主这三支是写死的十六进制
+  // （浅色 `#e6f4e7` / `#edf7ed` / `#01a241`），完全不随预设走 ——
+  // 在纸感（暖白）与午夜（冷黑）上都是一块突兀的冷绿。现在按同一支语义色
+  // 在画布上派生：行底掺 10%，行号槽掺 5%（宿主的槽比行**更淡**，两种明暗都是），
+  // 标记用求解后的本色。
+  for (const [family, [light, dark]] of [
+    ['added', [semantic.light.success, semantic.dark.success]],
+    ['deleted', [semantic.light.error, semantic.dark.error]]
+  ]) {
+    tokens[`--dsw-alias-file-diff-${family}-bg`] = t(
+      tint(L.canvas, light, 0.1),
+      tint(D.canvas, dark, 0.1)
+    )
+    tokens[`--dsw-alias-file-diff-${family}-gutter`] = t(
+      tint(L.canvas, light, 0.05),
+      tint(D.canvas, dark, 0.05)
+    )
+    tokens[`--dsw-alias-file-diff-${family}-marker`] = t(light, dark)
+  }
+  tokens['--dsw-alias-interactive-bg-hover-danger'] = t(
+    alpha(semantic.light.error, 0.08),
+    alpha(semantic.dark.error, 0.15)
+  )
+
+  // ---- 宿主缺口的修正 -----------------------------------------------------
+  // 这两个令牌**宿主从未声明过**，却有组件在消费它们。这不是猜测：
+  // `scripts/audit-consumers.mjs` 把「被消费、却从未声明」的令牌从宿主样式与
+  // 51 个 bundle 里枚举出来（见 reference/host-consumers.json），它们就在那张表里。
+  // 缺失的后果各不相同，但都是静默的：
+  //
+  //   · `--dsw-alias-label-error` —— `color: var(--该令牌)` 在计算值阶段成为
+  //     guaranteed-invalid，`color` 于是按 `unset` 处理（= 继承）。
+  //     结果：设置页的「保存失败」提示用的是正文墨色，与普通文字一模一样，
+  //     用户看不出这次保存失败了。
+  //   · `--dsw-alias-bg-layer-4` —— 同理，`background` 落到 initial（transparent）。
+  //     结果：设置页那个「?」帮助按钮悬停时没有底色反馈。
+  //
+  // 修法就是把这两支补上，并从预设里取值 —— 与 v1.0 修灯箱关闭按钮同属一类：
+  // 不改宿主，只把它漏掉的那一格填上。
+  tokens['--dsw-alias-label-error'] = t(semantic.light.error, semantic.dark.error)
+  // 表面阶梯的第四级。宿主的 1/2/3 在浅色下全是纯白，第四级本来就是
+  // 「悬停时那一点可见的差」；这里按同一支笔派生：浅色往墨色掺 6%，
+  // 深色往白色掺 6%（深色下越高越亮），于是它天然是第 3 级之上的一档。
+  tokens['--dsw-alias-bg-layer-4'] = t(
+    tint(L.surface3, neutralText.light.ink, 0.06),
+    tint(D.surface3, '#ffffff', 0.06)
+  )
 
   // ---- 交互态 -------------------------------------------------------------
   // 这些淡染层之上压的是正文（`--dsw-alias-label-primary`）或强调色本身，
@@ -1795,6 +2455,12 @@ function buildTokens(state) {
     const px = `${radius.radii[key]}px`
     tokens[name] = t(px, px)
   }
+  // 圆角形状：宿主把它声明在 `:root`、由 `*` 规则消费，因此 body 上的行内值
+  // 能正常继承到全部后代（唯一够不着的是 `html` 自己，而它没有可见圆角）。
+  // 取值必须是合法的 `corner-shape` 语法 —— 宿主那句 `@supports` 保证
+  // 不支持的浏览器根本不会消费这个令牌，所以写错也只是静默无效，
+  // 因此 check.mjs 直接断言三档的语法。
+  tokens['--dsw-corner-shape'] = t(corner.css, corner.css)
   // Windows 标题栏模式下内容区左上角的那个圆角。宿主把它声明在 frame 元素上，
   // 行内值够不着，因此这里只交出原语，由 base.css 以更高特异性贴上去。
   tokens['--dshb-content-radius'] = t(
@@ -1878,6 +2544,7 @@ const DEFAULT_STATE = Object.freeze({
   preset: 'aurora',
   accent: 'deepseek',
   radius: 'standard',
+  corner: 'squircle',
   ambient: true,
   motion: true,
   typography: true,
@@ -1893,7 +2560,7 @@ const BOOLEAN_KEYS = [
   'taskList',
   'glass'
 ]
-const STRING_KEYS = ['preset', 'accent', 'radius']
+const STRING_KEYS = ['preset', 'accent', 'radius', 'corner']
 
 /**
  * 把任意输入归一化成合法状态：未知键丢弃、非法值回落默认值。
@@ -1916,7 +2583,10 @@ function normalizeState(raw, options) {
     const allowed = known[key]
     const value = source[key]
     if (typeof value !== 'string') continue
-    if (Array.isArray(allowed) && allowed.length > 0) {
+    // 只有在 `known` **完全没有**提供这个键时才放行任意字符串（无选项的调用路径）。
+    // 提供了一张空表意味着「这个键目前没有合法取值」，那就应当回落默认值 ——
+    // 旧写法把空表当成「没有约束」，于是一张空表会把拼错的值原样放进去。
+    if (Array.isArray(allowed)) {
       if (allowed.includes(value)) next[key] = value
     } else {
       next[key] = value
@@ -1951,10 +2621,10 @@ function saveState(state) {
  * 修改样式请编辑 src/client/styles/*.css，然后运行 `node scripts/build.mjs`。
  */
 const STYLES = [
-  ["base", "/*\n * 界面美化 · Lumina —— 基础层：画布氛围、选区、滚动条、交互过渡。\n *\n * 规则约束（与宿主 docs/web-styling 的取向一致）：\n *   1. 只使用三类稳定选择器 —— 元素选择器、ARIA role/状态属性、\n *      宿主明确设置的 data-* 属性；\n *   2. 需要覆盖宿主令牌化属性时，用 `html body` 前缀提升特异性，\n *      不写 !important（inline 令牌本来就该由 overrideTokens 负责）；\n *   3. CSS Module 的类名形如 `{hash}_{local}`，哈希随构建变化，\n *      因此只在确有必要时用 `[class*='_local']` 这种与哈希无关的后缀匹配，\n *      匹配不到时静默降级，绝不报错。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 页面根：把主题色透出到浏览器/窗口底色，并保住 body 背景的可预测性\n * ------------------------------------------------------------------ */\n\nhtml body {\n  background-color: var(--dsw-alias-bg-base);\n}\n\n/* ------------------------------------------------------------------ *\n * 2. 氛围光\n *\n *    只挂在**侧栏列**上。这一条是踩过坑之后收紧的：\n *\n *    最初同时挂在框架（`[class*='_frame']`）上。框架本来被两列完全盖住，\n *    唯一露出来的地方是 Windows 标题栏模式下中心列左上角那个\n *    `border-radius: 16px` 的圆角 —— 而 background-image 的默认原点\n *    （background-origin: padding-box）恰好就在内容区左上角。于是那个圆角\n *    里露出的是光斑**最亮的那一点**，被圆角切成一块带硬边的蓝色楔形，\n *    在浅色下非常显眼。\n *\n *    框架不需要氛围光：它可见的部分只有标题栏拖拽带（被 `:before` 盖住）\n *    和上述圆角露出的区域，而那两处应当是与侧栏连续的纯色。\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-ambient='on'] body [class*='_sidebarCol'] {\n  background-image: radial-gradient(\n      120% 55% at 0% 0%,\n      var(--dshb-ambient-a),\n      var(--dshb-ambient-a-fade) 70%\n    ),\n    radial-gradient(\n      120% 50% at 100% 100%,\n      var(--dshb-ambient-b),\n      var(--dshb-ambient-b-fade) 72%\n    );\n  /* radial-gradient 默认就铺满整个盒子，no-repeat 对它是空操作，\n     写出来只会让下一个人以为这里有平铺行为。 */\n}\n\n/* ------------------------------------------------------------------ *\n * 3. 文本选区：官方是 40% 蓝，这里改为强调色，与品牌位保持一致\n * ------------------------------------------------------------------ */\n\nhtml body ::selection {\n  background-color: var(--dsw-alias-bg-document-selection);\n}\n\n/* ------------------------------------------------------------------ *\n * 4. 滚动条：官方 5px 无边框。这里给滑块留出 1.5px 透明边，视觉更细但\n *    命中区域不变宽（宽度由 --dsh-scrollbar-width 决定，保持 6px）。\n *    WebKit 路径走伪元素；Firefox 路径由 scrollbar.css 的宽细标准接管。\n * ------------------------------------------------------------------ */\n\nhtml body {\n  --dsh-scrollbar-width: 6px;\n  --dsh-scrollbar-thumb-border: 1.5px;\n  --dsh-scrollbar-track-margin: 4px;\n}\n\n/* ------------------------------------------------------------------ *\n * 5. 交互过渡\n *    只过渡「颜色类」属性 —— 布局属性加过渡会造成拖拽/折叠时的粘滞感。\n *    尊重 prefers-reduced-motion：命中时整段失效。\n * ------------------------------------------------------------------ */\n\n@media (prefers-reduced-motion: no-preference) {\n  html[data-dshb-motion='on']\n    body\n    :is(\n      button,\n      a,\n      summary,\n      input,\n      textarea,\n      select,\n      [role='button'],\n      [role='menuitem'],\n      [role='menuitemcheckbox'],\n      [role='menuitemradio'],\n      [role='option'],\n      [role='tab'],\n      [role='switch'],\n      [role='checkbox'],\n      [role='radio']\n    ) {\n    transition: background-color var(--ds-transition-duration-fast)\n        var(--ds-ease-in-out),\n      border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      color var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);\n  }\n\n  /* 浮层与卡片入场时给一点高度变化，避免菜单「凭空出现」 */\n  html[data-dshb-motion='on'] body [data-menu-material],\n  html[data-dshb-motion='on'] body [role='dialog'],\n  html[data-dshb-motion='on'] body [role='menu'],\n  html[data-dshb-motion='on'] body [role='listbox'] {\n    transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out),\n      transform var(--ds-transition-duration) var(--ds-ease-in-out),\n      box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);\n  }\n}\n\n/* ------------------------------------------------------------------ *\n * 6. 焦点环：颜色已由 --dsw-focus-ring-color 令牌接管（随强调色走），\n *    这里只补一点外发光，让键盘焦点在复杂卡片上更容易被找到。\n * ------------------------------------------------------------------ */\n\nhtml body :focus-visible {\n  outline-offset: 2px;\n}\n\n/* ------------------------------------------------------------------ *\n * 7. 内容区圆角\n *\n *    Windows 标题栏模式下，宿主把中心列左上角切成\n *    `border-radius: var(--dsh-windows-content-radius) 0 0 0; corner-shape: round`，\n *    那个圆角露出的正是框架底色 —— 也就是侧栏填充色。它是整块内容区视觉上\n *    最靠外的一个圆角，必须与相邻表面（卡片、面板）用同一支笔。\n *\n *    宿主把该令牌声明在 frame 元素**自身**上（`[data-windows-titlebar]\n *    .xxx_frame`，特异性 0,0,2,0），body 上的行内值只够被继承，够不着它。\n *    因此这里用 `html body [class*='_frame']`（0,0,2,1）覆盖，取值来自插件\n *    原语 `--dshb-content-radius`，与圆角档位联动。\n *\n *    宿主同时写了 `corner-shape: round`：这个角是**正圆**，不是全局的方圆形。\n *    保持不动 —— 它是内容区最外沿的轮廓，跟随全局方圆形会让四个角与窗口\n *    自身的圆角对不上。\n * ------------------------------------------------------------------ */\n\nhtml body [class*='_frame'] {\n  --dsh-windows-content-radius: var(--dshb-content-radius);\n}\n"],
+  ["base", "/*\n * 界面美化 · Lumina —— 基础层：画布氛围、选区、滚动条、交互过渡。\n *\n * 规则约束（与宿主 docs/web-styling 的取向一致）：\n *   1. 只使用三类稳定选择器 —— 元素选择器、ARIA role/状态属性、\n *      宿主明确设置的 data-* 属性；\n *   2. 需要覆盖宿主令牌化属性时，用 `html body` 前缀提升特异性，\n *      不写 !important（inline 令牌本来就该由 overrideTokens 负责）；\n *   3. CSS Module 的类名形如 `{hash}_{local}`，哈希随构建变化，\n *      因此只在确有必要时用 `[class*='_local']` 这种与哈希无关的后缀匹配，\n *      匹配不到时静默降级，绝不报错。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 页面根：把主题色透出到浏览器/窗口底色，并保住 body 背景的可预测性\n * ------------------------------------------------------------------ */\n\nhtml body {\n  background-color: var(--dsw-alias-bg-base);\n}\n\n/* ------------------------------------------------------------------ *\n * 2. 氛围光\n *\n *    只挂在**侧栏列**上。这一条是踩过坑之后收紧的：\n *\n *    最初同时挂在框架（`[class*='_frame']`）上。框架本来被两列完全盖住，\n *    唯一露出来的地方是 Windows 标题栏模式下中心列左上角那个\n *    `border-radius: 16px` 的圆角 —— 而 background-image 的默认原点\n *    （background-origin: padding-box）恰好就在内容区左上角。于是那个圆角\n *    里露出的是光斑**最亮的那一点**，被圆角切成一块带硬边的蓝色楔形，\n *    在浅色下非常显眼。\n *\n *    框架不需要氛围光：它可见的部分只有标题栏拖拽带（被 `:before` 盖住）\n *    和上述圆角露出的区域，而那两处应当是与侧栏连续的纯色。\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-ambient='on'] body [class*='_sidebarCol'] {\n  background-image: radial-gradient(\n      120% 55% at 0% 0%,\n      var(--dshb-ambient-a),\n      var(--dshb-ambient-a-fade) 70%\n    ),\n    radial-gradient(\n      120% 50% at 100% 100%,\n      var(--dshb-ambient-b),\n      var(--dshb-ambient-b-fade) 72%\n    );\n  /* radial-gradient 默认就铺满整个盒子，no-repeat 对它是空操作，\n     写出来只会让下一个人以为这里有平铺行为。 */\n}\n\n/* ------------------------------------------------------------------ *\n * 3. 文本选区：官方是 40% 蓝，这里改为强调色，与品牌位保持一致\n * ------------------------------------------------------------------ */\n\nhtml body ::selection {\n  background-color: var(--dsw-alias-bg-document-selection);\n}\n\n/* ------------------------------------------------------------------ *\n * 4. 滚动条\n *\n *    官方是 5px 无边框、无轨道留白。插件把轨道留白改成 4px、给滑块留 1.5px\n *    透明边，于是**可见**滑块从 5px 变成 3px、而**命中区域**从官方的 5px\n *    变成 6px（宽了 1px，+20%）。\n *\n *    上一版的注释写的是「命中区域不变宽……保持 6px」—— 那句话是错的：官方本来\n *    就不是 6px。这 1px 是有意留的（3px 的滑块已经偏细，再把命中区域收回去会\n *    明显更难抓住），但注释必须说的是事实。\n *\n *    这个变量还被宿主自己消费：`markdown__MarkdownText` 的宽表格用\n *    `padding-bottom: var(--dsh-scrollbar-width, 5px)` 给横向滚动条留位，\n *    所以改它等于同时改了表格底部的留白 —— 又一处理由不去动它。\n * ------------------------------------------------------------------ */\n\nhtml body {\n  --dsh-scrollbar-width: 6px;\n  --dsh-scrollbar-thumb-border: 1.5px;\n  --dsh-scrollbar-track-margin: 4px;\n}\n\n/* ------------------------------------------------------------------ *\n * 5. 交互过渡\n *    只过渡「颜色类」属性 —— 布局属性加过渡会造成拖拽/折叠时的粘滞感。\n *    尊重 prefers-reduced-motion：命中时整段失效。\n * ------------------------------------------------------------------ */\n\n@media (prefers-reduced-motion: no-preference) {\n  html[data-dshb-motion='on']\n    body\n    :is(\n      button,\n      a,\n      summary,\n      input,\n      textarea,\n      select,\n      [role='button'],\n      [role='menuitem'],\n      [role='menuitemcheckbox'],\n      [role='menuitemradio'],\n      [role='option'],\n      [role='tab'],\n      [role='switch'],\n      [role='checkbox'],\n      [role='radio']\n    ) {\n    transition: background-color var(--ds-transition-duration-fast)\n        var(--ds-ease-in-out),\n      border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      color var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out),\n      opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);\n  }\n\n  /* 浮层与卡片入场时给一点高度变化，避免菜单「凭空出现」 */\n  html[data-dshb-motion='on'] body [data-menu-material],\n  html[data-dshb-motion='on'] body [role='dialog'],\n  html[data-dshb-motion='on'] body [role='menu'],\n  html[data-dshb-motion='on'] body [role='listbox'] {\n    transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out),\n      transform var(--ds-transition-duration) var(--ds-ease-in-out),\n      box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);\n  }\n}\n\n/* ------------------------------------------------------------------ *\n * 6. 焦点环：颜色已由 --dsw-focus-ring-color 令牌接管（随强调色走），\n *    这里只补一点外发光，让键盘焦点在复杂卡片上更容易被找到。\n * ------------------------------------------------------------------ */\n\nhtml body :focus-visible {\n  outline-offset: 2px;\n}\n\n/* ------------------------------------------------------------------ *\n * 7. 内容区圆角\n *\n *    Windows 标题栏模式下，宿主把中心列左上角切成\n *    `border-radius: var(--dsh-windows-content-radius) 0 0 0; corner-shape: round`，\n *    那个圆角露出的正是框架底色 —— 也就是侧栏填充色。它是整块内容区视觉上\n *    最靠外的一个圆角，必须与相邻表面（卡片、面板）用同一支笔。\n *\n *    宿主把该令牌声明在 frame 元素**自身**上：\n *\n *      [data-windows-titlebar] .BynINW_frame { --dsh-windows-content-radius: 16px }\n *\n *    那是一条 **两个类级选择器**的规则（属性 + 类），座标 (0,2,0)。\n *    v1.2 用的是 `html body [class*='_frame']` —— 两个元素选择器 + 一个属性选择器，\n *    座标 (0,1,2)。**属性选择器与类同级**，所以 1 < 2：宿主赢，这条规则从未生效。\n *    缺陷一直没被发现，是因为默认档（standard）的内容区圆角恰好也是 16px。\n *\n *    现在把 Windows 条件挂到 `html` 上：`html[data-windows-titlebar] body …`\n *    座标 (0,2,2) > (0,2,0)，两处都赢；语义上也更准确 —— 这个圆角本来\n *    就只在 Windows 标题栏模式下存在。\n *\n *    宿主同时写了 `corner-shape: round`：这个角是**正圆**，不是全局的方圆形。\n *    保持不动 —— 它是内容区最外沿的轮廓，跟随全局方圆形会让四个角与窗口\n *    自身的圆角对不上。`scripts/check.mjs` 有一条断言盯着这里的选择器形状。\n * ------------------------------------------------------------------ */\n\nhtml[data-windows-titlebar] body [class*='_frame'] {\n  --dsh-windows-content-radius: var(--dshb-content-radius);\n}\n"],
   ["elevation", "/*\n * 界面美化 · Lumina —— 高度（elevation）令牌重组层。\n *\n * ## 为什么这一层必须存在\n * 宿主 gradient-shadow-text.css 把 `--dsw-elevation-*` 声明在 `body, body *` 上 ——\n * 也就是**每一个元素都自带一份声明**。插件通过 ctx.theme.overrideTokens 拿到的\n * 是 body 上的行内样式，行内值只能被继承；元素自带的声明优先于继承，所以行内\n * 覆盖对这一族令牌完全无效（这是宿主令牌体系里唯一一处这样的例外）。\n *\n * ## 怎么解\n * 插件改为交出「原语」：--dshb-elev-stroke-color / --dshb-elev-panel 等，\n * 它们没有第二个声明点，行内值可正常继承到所有后代；再由本表把这些原语组合成\n * 宿主令牌。选择器写成 `html body` / `html body *`，特异性严格高于宿主的\n * `body` / `body *`，因此不依赖样式表顺序、也不需要 !important。\n */\n\nhtml body,\nhtml body * {\n  --dsw-elevation-stroke: 0 0 0 0.5px var(--dshb-elev-stroke-color);\n  --dsw-elevation-panel: var(--dsw-elevation-stroke), var(--dshb-elev-panel);\n  --dsw-elevation-prominent: var(--dsw-elevation-stroke),\n    var(--dshb-elev-prominent);\n  --dsw-elevation-soft: var(--dsw-elevation-stroke), var(--dshb-elev-soft);\n}\n\n/*\n * 宿主在深色模式下给菜单材质换了一根更亮的描边色。官方值来自 border-l3，\n * 这里改用本预设的 stroke 原语，让菜单描边与其余浮层保持同一支笔。\n * 选择器特异性 (0,0,2,2) 高于宿主的 (0,0,2,1)。\n */\nhtml body[data-ds-dark-theme] [data-menu-material],\nhtml body [data-menu-material] {\n  --dsw-elevation-stroke-color: var(--dshb-elev-stroke-color);\n}\n"],
-  ["typography", "/*\n * 界面美化 · Lumina —— 内容排版精修层（可用 data-dshb-typography 整体关闭）。\n *\n * 这一层处理令牌表达不了的东西：字形平滑、等宽数字、代码块与引用块的细节。\n * 全部使用元素选择器 —— 它们由宿主 Markdown 渲染器产出，与 CSS Module 哈希无关，\n * 因此跨版本稳定；代价是无法区分「会话里的表格」与「插件面板里的表格」，\n * 这对视觉一致性而言反而是好事。\n *\n * 打开/关闭由 <html data-dshb-typography=\"on|off\"> 控制。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 字形渲染\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body {\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n  text-rendering: optimizeLegibility;\n}\n\n/* 中文正文在 system-ui 下字距偏挤；0.01em 是几乎察觉不到、但整页读起来更松的量 */\nhtml[data-dshb-typography='on'] body :is(p, li, dd, dt, td, th) {\n  letter-spacing: 0.01em;\n}\n\n/* 表格、代码、时间戳里的数字等宽，列才对得齐 */\nhtml[data-dshb-typography='on'] body :is(table, code, kbd, samp, pre) {\n  font-variant-numeric: tabular-nums;\n  font-feature-settings: 'tnum' 1, 'cv05' 1;\n}\n\n/* ------------------------------------------------------------------ *\n * 2. 代码\n * ------------------------------------------------------------------ */\n\n/* 行内代码：官方只给底色，这里补一根极淡描边，让它从正文里「浮」起来 */\nhtml body :not(pre) > code {\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: var(--dsw-radius-xs);\n  padding: 0.1em 0.34em;\n}\n\n/* 代码块：**刻意不动 `<pre>`**。\n *\n * 第一版给所有 `pre` 加了边框 + 圆角 + 顶部内高光，理由是「大面积实色显得扁平」。\n * 那是个错误：宿主的代码块把视觉身份放在 `pre` 自己身上 ——\n *\n *   .block { border-radius: var(--dsw-radius-lg); background: … }        ← 卡片\n *   .block :where(pre) { padding: 16px; background: …;\n *                        border-bottom-*-radius: var(--dsw-radius-lg) }   ← pre 自带圆角\n *\n * 于是我的规则会在卡片内部套出第二层细圆角边框。官方基线是**单层干净卡片**，\n * 而带这条规则的版本能在验证台里肉眼看出那个内框\n * （见 verify/out/panels-official-light.png 与 panels-pre-border-aurora-light.png\n * 的对照，夹具 `?bug=pre-border` 就是这条被删掉的规则）。\n *\n * 代码块与正文的区分已经由令牌层完成：`--dsw-alias-markdown-code-block` 与\n * `-banner` 都随预设调整过。样式表再叠一层，收益是零，代价是打一架。\n */\n\n/* ------------------------------------------------------------------ *\n * 3. 引用与分隔\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body blockquote {\n  border-inline-start: 3px solid var(--dsw-alias-state-business-primary);\n  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;\n  padding-inline-start: 0.85em;\n}\n\nhtml[data-dshb-typography='on'] body hr {\n  border: 0;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n}\n\n/* ------------------------------------------------------------------ *\n * 4. 表格\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body th {\n  background-color: var(--dsw-alias-markdown-code-block-banner);\n}\n\nhtml[data-dshb-typography='on'] body table {\n  border-radius: var(--dsw-radius-sm);\n  overflow: clip;\n}\n\n/* ------------------------------------------------------------------ *\n * 5. 链接与图片\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body a {\n  text-underline-offset: 0.22em;\n  text-decoration-thickness: 0.06em;\n}\n\nhtml[data-dshb-typography='on'] body :is(img, video) {\n  border-radius: var(--dsw-radius-sm);\n}\n"],
-  ["task-list", "/*\n * 界面美化 · Lumina —— 任务列表面板增强（可用 data-dshb-tasklist 整体关闭）。\n *\n * ## 要解决的问题\n * 宿主的 TodoPanel 三态在视觉上几乎不可分：任务项文字**恒为同一种**\n * `--dsw-alias-label-secondary`，状态只由一个 6px 的状态点承担 —— 已完成是绿点、\n * 进行中是转圈、待处理是灰点。十几行排下来，扫一眼得到的印象是「都差不多」，\n * 于是「做完了没有」这个问题在面板上读不出来。\n *\n * 另外列表 `max-height: 180px` 配 `overflow-y: auto`，行高 28px 不是整数倍，\n * 最后一行常常被硬切成两半，且没有任何「还能滚」的提示 —— 看起来像渲染坏了。\n *\n * ## 做了什么\n * 1. 把状态差从「6px 圆点」放大到「整行可辨」：\n *    已完成 → 文字降权 + 删除线；进行中 → 强调色淡染行底 + 左侧强调条 + 文字加重；\n *    待处理 → 保持宿主原样（它是基线，不需要被强调）。\n * 2. 列表底部加渐隐，并在末尾留出与渐隐等高的空白 —— 滚到底时渐隐落在空白上，\n *    最后一行不会被误伤；未滚到底时渐隐正好压住被切开的半行，把「硬切」\n *    变成「下面还有」的提示。\n * 3. 表头是 `<button>`，宿主没给 hover 反馈；补上，并保持图标横向位置不变。\n *\n * ## 选择器约定\n * 只用宿主**有意暴露**的钩子：面板根的 `data-testid=\"todo-panel\"`、\n * 任务项的 `data-status=\"completed|in_progress|pending\"`（封闭联合，来自\n * ui-conversation 的 TodoItem 类型）、以及 `aria-expanded`。\n * 全程不碰 `.aSus8q_item` 这类编译哈希类名 —— 宿主改一次构建就会失效。\n *\n * 内容节点用 `> span:last-child` 定位：任务项固定只有两个子元素\n * （状态点 span + 内容 span），这个结构由 JSX 决定，比类名稳定。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 状态阶梯\n * ------------------------------------------------------------------ */\n\n/* 已完成：降权 + 删除线。删除线用描边色而不是文字色，\n   让「划掉」这件事读得出来、又不至于抢走正文的注意力。 */\nhtml[data-dshb-tasklist='on']\n  body\n  [data-testid='todo-panel']\n  li[data-status='completed']\n  > span:last-child {\n  color: var(--dsw-alias-label-caption);\n  text-decoration: line-through;\n  text-decoration-color: var(--dsw-alias-border-l4);\n  text-decoration-thickness: 1px;\n}\n\n/* 进行中：这一行是「现在正在做的事」，给它最强的视觉权重。\n   左右各 6px 的负外边距与内边距配成一对，行被撑宽了 12px 又收回 12px，\n   状态点与文字的横向位置与其他行严格对齐。 */\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] li[data-status='in_progress'] {\n  position: relative;\n  margin-inline: -6px;\n  padding-inline: 6px;\n  border-radius: var(--dsw-radius-xs);\n  background: var(--dsw-alias-interactive-bg-hover-accent);\n  color: var(--dsw-alias-label-primary);\n  font-weight: 500;\n}\n\n/* 左侧强调条。绝对定位的包含块是行的内边距盒，inset-inline-start: 0\n   因此落在行的左边缘，而不是文字起点。 */\nhtml[data-dshb-tasklist='on']\n  body\n  [data-testid='todo-panel']\n  li[data-status='in_progress']::before {\n  content: '';\n  position: absolute;\n  inset-inline-start: 0;\n  inset-block: 2px;\n  width: 2px;\n  border-radius: 1px;\n  background: var(--dsw-alias-state-business-primary);\n}\n\n/* 待处理刻意不做任何样式：三档里只有它保持宿主原样，\n   另外两档的差异才有参照物。 */\n\n/* ------------------------------------------------------------------ *\n * 2. 列表溢出：底部渐隐\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] ul {\n  padding-block-end: 12px;\n  mask-image: linear-gradient(\n    to bottom,\n    #000 calc(100% - 12px),\n    transparent 100%\n  );\n}\n\n/* ------------------------------------------------------------------ *\n * 3. 表头：它是个按钮，宿主没给可点的反馈\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button {\n  margin-inline: -6px;\n  padding-inline: 6px;\n  border-radius: var(--dsw-radius-sm);\n}\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:focus-visible {\n  outline: var(--dsw-focus-ring-width, 2px) solid\n    var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));\n  outline-offset: 1px;\n}\n"],
+  ["typography", "/*\n * 界面美化 · Lumina —— 内容排版精修层（可用 data-dshb-typography 整体关闭）。\n *\n * 这一层处理令牌表达不了的东西：字形平滑、等宽数字、代码块与引用块的细节。\n * 全部使用元素选择器 —— 它们由宿主 Markdown 渲染器产出，与 CSS Module 哈希无关，\n * 因此跨版本稳定；代价是无法区分「会话里的表格」与「插件面板里的表格」，\n * 这对视觉一致性而言反而是好事。\n *\n * 打开/关闭由 <html data-dshb-typography=\"on|off\"> 控制。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 字形渲染\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body {\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n  text-rendering: optimizeLegibility;\n}\n\n/* 中文正文在 system-ui 下字距偏挤；0.01em 是几乎察觉不到、但整页读起来更松的量 */\nhtml[data-dshb-typography='on'] body :is(p, li, dd, dt, td, th) {\n  letter-spacing: 0.01em;\n}\n\n/* 表格、代码、时间戳里的数字等宽，列才对得齐 */\nhtml[data-dshb-typography='on'] body :is(table, code, kbd, samp, pre) {\n  font-variant-numeric: tabular-nums;\n  font-feature-settings: 'tnum' 1, 'cv05' 1;\n}\n\n/* ------------------------------------------------------------------ *\n * 2. 行内代码：**刻意不加任何东西**\n *\n *    v1.0–v1.2 这里有一条 `html body :not(pre) > code { border: 1px solid …;\n *    border-radius: var(--dsw-radius-xs); padding: 0.1em 0.34em }`，理由写的是\n *    「官方只给底色，这里补一根极淡描边」。**那句话是错的**，而且规则本身也打不过：\n *\n *      · 宿主 `markdown__MarkdownText.module.css` 的\n *        `.markdown :not(pre) > code` 已经写着\n *        `border: 0.5px solid var(--dsw-alias-border-l1)`、\n *        `border-radius: var(--dsw-radius-sm)`、`padding: 0 5px`\n *        —— 描边、圆角、内边距官方全都给了；\n *      · 那条规则座标 (0,1,2)，而插件的 `html body :not(pre) > code` 是 (0,0,4)：\n *        **类级 1 > 0，宿主赢**。行内代码在实际出现的唯一位置（Markdown 正文里）\n *        拿到的一直是宿主的值，插件声明的三个属性一个都没生效；\n *      · 它还是整个文件里唯一没有 `data-dshb-typography` 前缀的规则 ——\n *        于是「内容精修」关掉之后，它仍然在 markdown **之外** 的 `<code>` 上生效。\n *\n *    修法是删掉整条，而不是加 `!important` 或提特异性去赢一个本来就正确的官方样式 ——\n *    与 v1.1 删掉 `<pre>` 那条边框规则是同一个判断：**样式表再叠一层，收益是零，\n *    代价是打一架**。行内代码的外观由令牌决定（`--dsw-alias-markdown-inline-code`、\n *    `--dsw-radius-sm`），它们本来就随预设走。\n * ------------------------------------------------------------------ */\n\n/* 代码块：**刻意不动 `<pre>`**。\n *\n * 第一版给所有 `pre` 加了边框 + 圆角 + 顶部内高光，理由是「大面积实色显得扁平」。\n * 那是个错误：宿主的代码块把视觉身份放在 `pre` 自己身上 ——\n *\n *   .block { border-radius: var(--dsw-radius-lg); background: … }        ← 卡片\n *   .block :where(pre) { padding: 16px; background: …;\n *                        border-bottom-*-radius: var(--dsw-radius-lg) }   ← pre 自带圆角\n *\n * 于是我的规则会在卡片内部套出第二层细圆角边框。官方基线是**单层干净卡片**，\n * 而带这条规则的版本能在验证台里肉眼看出那个内框\n * （见 verify/out/panels-official-light.png 与 panels-pre-border-aurora-light.png\n * 的对照，夹具 `?bug=pre-border` 就是这条被删掉的规则）。\n *\n * 代码块与正文的区分已经由令牌层完成：`--dsw-alias-markdown-code-block` 与\n * `-banner` 都随预设调整过。样式表再叠一层，收益是零，代价是打一架。\n */\n\n/* ------------------------------------------------------------------ *\n * 3. 引用与分隔\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body blockquote {\n  border-inline-start: 3px solid var(--dsw-alias-state-business-primary);\n  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;\n  padding-inline-start: 0.85em;\n}\n\nhtml[data-dshb-typography='on'] body hr {\n  border: 0;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n}\n\n/* ------------------------------------------------------------------ *\n * 4. 表格\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body th {\n  background-color: var(--dsw-alias-markdown-code-block-banner);\n}\n\nhtml[data-dshb-typography='on'] body table {\n  border-radius: var(--dsw-radius-sm);\n  overflow: clip;\n}\n\n/* ------------------------------------------------------------------ *\n * 5. 链接与图片\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-typography='on'] body a {\n  text-underline-offset: 0.22em;\n  text-decoration-thickness: 0.06em;\n}\n\nhtml[data-dshb-typography='on'] body :is(img, video) {\n  border-radius: var(--dsw-radius-sm);\n}\n"],
+  ["task-list", "/*\n * 界面美化 · Lumina —— 任务列表面板增强（可用 data-dshb-tasklist 整体关闭）。\n *\n * ## 要解决的问题\n * 宿主的 TodoPanel 三态在视觉上几乎不可分：任务项文字**恒为同一种**\n * `--dsw-alias-label-secondary`，状态只由一个 6px 的状态点承担 —— 已完成是绿点、\n * 进行中是转圈、待处理是灰点。十几行排下来，扫一眼得到的印象是「都差不多」，\n * 于是「做完了没有」这个问题在面板上读不出来。\n *\n * 另外列表 `max-height: 180px` 配 `overflow-y: auto`，行高 28px 不是整数倍，\n * 最后一行常常被硬切成两半，且没有任何「还能滚」的提示 —— 看起来像渲染坏了。\n *\n * ## 做了什么\n * 1. 把状态差从「6px 圆点」放大到「整行可辨」：\n *    已完成 → 文字降权 + 删除线；进行中 → 强调色淡染行底 + 左侧强调条 + 文字加重；\n *    待处理 → 保持宿主原样（它是基线，不需要被强调）。\n * 2. 列表底部加渐隐，并在末尾留出与渐隐等高的空白 —— 滚到底时渐隐落在空白上，\n *    最后一行不会被误伤；未滚到底时渐隐正好压住被切开的半行，把「硬切」\n *    变成「下面还有」的提示。\n * 3. 表头是 `<button>`，宿主没给 hover 反馈；补上，并保持图标横向位置不变。\n *\n * ## 选择器约定\n * 只用宿主**有意暴露**的钩子：面板根的 `data-testid=\"todo-panel\"`、\n * 任务项的 `data-status=\"completed|in_progress|pending\"`（封闭联合，来自\n * ui-conversation 的 TodoItem 类型）、以及 `aria-expanded`。\n * 全程不碰 `.aSus8q_item` 这类编译哈希类名 —— 宿主改一次构建就会失效。\n *\n * 内容节点用 `> span:last-child` 定位：任务项固定只有两个子元素\n * （状态点 span + 内容 span），这个结构由 JSX 决定，比类名稳定。\n */\n\n/* ------------------------------------------------------------------ *\n * 1. 状态阶梯\n * ------------------------------------------------------------------ */\n\n/* 已完成：降权 + 删除线。删除线用描边色而不是文字色，\n   让「划掉」这件事读得出来、又不至于抢走正文的注意力。 */\nhtml[data-dshb-tasklist='on']\n  body\n  [data-testid='todo-panel']\n  li[data-status='completed']\n  > span:last-child {\n  color: var(--dsw-alias-label-caption);\n  text-decoration: line-through;\n  text-decoration-color: var(--dsw-alias-border-l4);\n  text-decoration-thickness: 1px;\n}\n\n/* 进行中：这一行是「现在正在做的事」，给它最强的视觉权重。\n   左右各 6px 的负外边距与内边距配成一对，行被撑宽了 12px 又收回 12px，\n   状态点与文字的横向位置与其他行严格对齐。\n\n   **不要在这里写 border-radius**：宿主的面板列表是 `overflow-y: auto` 的滚动容器\n   （`overflow-x` 因此计算成 auto），行盒宽出容器 12px、左右各 6px 落在容器的\n   内边距盒之外被裁掉 —— 高亮带是**通栏**的，圆角永远不可见。\n   v1.2 写了 `border-radius: var(--dsw-radius-xs)`，那是一行死代码；\n   真正可见的后果是那 6px 溢出变成了**一条横向滚动条**（见下面的 ul 规则）。 */\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] li[data-status='in_progress'] {\n  position: relative;\n  margin-inline: -6px;\n  padding-inline: 6px;\n  background: var(--dsw-alias-interactive-bg-hover-accent);\n  color: var(--dsw-alias-label-primary);\n  font-weight: 500;\n}\n\n/* 左侧强调条。绝对定位的包含块是行的内边距盒，inset-inline-start: 0\n   因此落在行的左边缘，而不是文字起点。 */\nhtml[data-dshb-tasklist='on']\n  body\n  [data-testid='todo-panel']\n  li[data-status='in_progress']::before {\n  content: '';\n  position: absolute;\n  inset-inline-start: 0;\n  inset-block: 2px;\n  width: 2px;\n  border-radius: 1px;\n  background: var(--dsw-alias-state-business-primary);\n}\n\n/* 待处理刻意不做任何样式：三档里只有它保持宿主原样，\n   另外两档的差异才有参照物。 */\n\n/* ------------------------------------------------------------------ *\n * 2. 列表溢出：底部渐隐 + 横向溢出封口\n * ------------------------------------------------------------------ */\n\n/* `overflow-x: hidden` 不是装饰，是上面那条负外边距的**收尾**：宿主的列表容器是\n   `overflow-y: auto`，按规范 `overflow-x` 会计算成 `auto`，于是行盒宽出的 12px\n   变成了真实的横向滚动溢出 —— 实测 6px 溢出、面板底下多一条横向滚动条。\n   把横向封掉之后，那条通栏高亮带仍然通栏，只是不再能把列表拖来拖去。 */\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] ul {\n  padding-block-end: 12px;\n  overflow-x: hidden;\n  mask-image: linear-gradient(\n    to bottom,\n    #000 calc(100% - 12px),\n    transparent 100%\n  );\n}\n\n/* ------------------------------------------------------------------ *\n * 3. 表头：它是个按钮，宿主没给可点的反馈\n * ------------------------------------------------------------------ */\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button {\n  margin-inline: -6px;\n  padding-inline: 6px;\n  border-radius: var(--dsw-radius-sm);\n}\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\nhtml[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:focus-visible {\n  outline: var(--dsw-focus-ring-width, 2px) solid\n    var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));\n  outline-offset: 1px;\n}\n"],
   ["safety", "/*\n * 界面美化 · Lumina —— 安全修正层。\n *\n * 这一层不放任何装饰。它只修一个宿主自身的问题：**页面控件被原生窗口按钮盖住，\n * 用户点到的是「关闭程序」**。\n *\n * ## 问题\n * Windows 上宿主用 Electron 的 `titleBarOverlay` 画最小化/最大化/关闭三个按钮。\n * 它们不在 DOM 里 —— Chromium 把它们绘制在页面**之上**，占位约\n * `top: 0..40px`、`right: 0..138px`（高度来自 host preload 写入的\n * `--dsh-windows-titlebar-height: 40px`）。\n *\n * 而图片灯箱的关闭按钮是：\n *\n *   .close { position: fixed; top: 20px; right: 20px; width: 36px; height: 36px }\n *   （宿主 ui-primitives 的 ImageLightbox.module.css）\n *\n * 它整个落在那三个原生按钮的下半部分里。因为原生覆盖层在上，点击被它截走 ——\n * 用户点「图片的 ✕」，程序被关掉。这是可复现的误操作，不是观感问题。\n *\n * ## 修法\n * 把灯箱关闭按钮挪到标题栏覆盖层**下方**。位移量不写死，而是用宿主自己发布的\n * `--dsh-frame-overlay-top`：ui-layout 把它定义为\n * `calc(--dsh-frame-top-clearance + 20px)`，而全屏时宿主会把它降回 20px ——\n * 全屏下原生按钮本就不显示，关闭按钮自动回到原位，不需要插件再加一条全屏判断。\n *\n * ## 选择器\n * 用与哈希无关的后缀匹配：编译后的类名形如 `_backdrop_1hos8_1` / `_close_1hos8_29`。\n * 全应用只有一个 `_backdrop` 类（图片灯箱），因此\n * `[class*='_backdrop'] [class*='_close_']` 唯一且稳定。匹配不到时静默降级 ——\n * 宿主哪天自己修好了，这条规则自动失效，不会有副作用。\n *\n * `scripts/check.mjs` 会断言这条规则始终挂在 `[data-windows-titlebar]` 下并引用\n * 宿主变量；`scripts/audit-caption-collision.mjs` 可在宿主升级后重新全量排查。\n */\n\nhtml[data-windows-titlebar] body [class*='_backdrop'] [class*='_close_'] {\n  top: var(--dsh-frame-overlay-top, 60px);\n}\n"],
   ["panel", "/*\n * 界面美化 · Lumina —— 设置面板样式。\n *\n * 类名统一用 `dshb-` 前缀的普通全局类（不是 CSS Module）：面板组件由本插件\n * 拥有，前缀足以避免与宿主及其它插件冲突，同时也省掉一层构建期哈希。\n *\n * 全部颜色都读宿主令牌，因此面板会跟随浅色/深色与所选预设一起变。\n *\n * ## 正圆与胶囊必须写 corner-shape: round\n * 宿主的 corner-shape.css 通过 `*,:before,:after { corner-shape: superellipse(1.5) }`\n * 把**所有**圆角平滑成方圆形。这对卡片、输入框是想要的效果，但会把\n * `border-radius: 50%` 的圆和 `999px` 的胶囊压变形。宿主自己的约定是：\n * 正圆形状需在所属组件样式表里把 `corner-shape: round` 与半径声明配对。\n * 本文件里四处圆（色板、预设色点、开关轨道、开关滑块）都遵守这一约定。\n * 不支持 corner-shape 的引擎会忽略该声明，退化成普通圆弧 —— 正是想要的。\n */\n\n.dshb-root {\n  display: flex;\n  flex-direction: column;\n  gap: 20px;\n  color: var(--dsw-alias-label-primary);\n  font-family: var(--dsw-font-family);\n  font-size: var(--dsh-content-font-size-secondary, 13px);\n}\n\n/* ---------------------------------------------------------------- 头部 */\n\n.dshb-head {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 16px;\n}\n\n.dshb-title {\n  margin: 0;\n  font-size: 16px;\n  font-weight: 600;\n  line-height: 24px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.dshb-subtitle {\n  margin: 4px 0 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-tertiary);\n  max-width: 46ch;\n}\n\n/* ------------------------------------------------------------ 主体容器 */\n\n.dshb-body {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  border: 1px solid var(--dsw-alias-settings-card-stroke, var(--dsw-alias-border-l4));\n  border-radius: var(--dsw-radius-md);\n  background-color: var(\n    --dsw-alias-settings-card-fill,\n    var(--dsw-alias-bg-layer-2)\n  );\n  padding: 4px 16px;\n}\n\n/* 总开关关闭时整块降饱和并禁用交互，明确表达「已停用」 */\n.dshb-body-off {\n  opacity: 0.45;\n  filter: saturate(0.4);\n  pointer-events: none;\n}\n\n/* ------------------------------------------------------------------ 行 */\n\n.dshb-row {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 16px;\n  padding: 14px 0;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n}\n\n.dshb-row:last-child {\n  border-bottom: 0;\n}\n\n.dshb-row-text {\n  min-width: 0;\n}\n\n.dshb-row-title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.dshb-row-hint {\n  margin-top: 2px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.dshb-row-control {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n/* ------------------------------------------------------------- 预设卡片 */\n\n.dshb-group {\n  padding: 14px 0;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n}\n\n.dshb-group-title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  margin-bottom: 10px;\n}\n\n.dshb-cards {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));\n  gap: 10px;\n}\n\n.dshb-card {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 6px;\n  padding: 12px;\n  cursor: pointer;\n  text-align: left;\n  font: inherit;\n  color: var(--dsw-alias-label-primary);\n  background-color: var(--dsw-alias-bg-layer-1);\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: var(--dsw-radius-sm);\n}\n\n.dshb-card:hover:not(:disabled) {\n  background-color: var(--dsw-alias-interactive-bg-hover);\n}\n\n.dshb-card-active {\n  border-color: var(--dsw-alias-state-business-primary);\n  box-shadow: 0 0 0 1px var(--dsw-alias-state-business-primary) inset;\n  background-color: var(--dsw-alias-interactive-bg-hover-accent);\n}\n\n.dshb-card:disabled {\n  cursor: default;\n}\n\n.dshb-card-dots {\n  display: flex;\n  gap: 4px;\n}\n\n.dshb-card-dot {\n  width: 14px;\n  height: 14px;\n  border-radius: 50%;\n  /* 正圆：必须显式关掉宿主的 superellipse，否则会被压成方圆形 */\n  corner-shape: round;\n  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset;\n}\n\n.dshb-card-name {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 18px;\n}\n\n.dshb-card-tagline {\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n/* --------------------------------------------------------------- 色板 */\n\n.dshb-swatches {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  justify-content: flex-end;\n}\n\n.dshb-swatch {\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border-radius: 50%;\n  /* 正圆：同上，宿主会给所有元素套 superellipse */\n  corner-shape: round;\n  cursor: pointer;\n  border: 0;\n  /* 面板可能在深色下，样式表按当前主题挑选明/暗两支强调色 */\n  background-color: var(--dshb-swatch-light);\n  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset;\n}\n\nbody[data-ds-dark-theme] .dshb-swatch {\n  background-color: var(--dshb-swatch-dark);\n}\n\n.dshb-swatch-active {\n  /* 中间那圈「空隙」必须用面板**实际所在的表面色**，不能用画布色：\n     面板坐在设置卡片上（--dsw-alias-settings-card-fill = bg-layer-2），\n     而画布色是 bg-base —— 深色下两者相差明显（#0c1017 vs #1b2230），\n     用画布色会在选中色板周围留下一圈发暗的光晕。 */\n  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset,\n    0 0 0 3px var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-base)),\n    0 0 0 5px var(--dsw-alias-state-business-primary);\n}\n\n.dshb-swatch:disabled {\n  cursor: default;\n}\n\n/* ----------------------------------------------------------- 分段选择器 */\n\n.dshb-segmented {\n  display: inline-flex;\n  padding: 2px;\n  gap: 2px;\n  border-radius: var(--dsw-radius-sm);\n  background-color: var(--dsw-alias-bg-layer-3);\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.dshb-segment {\n  padding: 4px 12px;\n  font: inherit;\n  font-size: 12px;\n  line-height: 18px;\n  cursor: pointer;\n  border: 0;\n  border-radius: calc(var(--dsw-radius-sm) - 3px);\n  background-color: transparent;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.dshb-segment:hover:not(:disabled) {\n  color: var(--dsw-alias-label-primary);\n  background-color: var(--dsw-alias-interactive-bg-hover);\n}\n\n.dshb-segment-active,\n.dshb-segment-active:hover:not(:disabled) {\n  background-color: var(--dsw-alias-bg-layer-1);\n  color: var(--dsw-alias-label-primary);\n  font-weight: 500;\n  box-shadow: var(--dsw-elevation-stroke, 0 0 0 0.5px var(--dsw-alias-border-l4)),\n    0 1px 3px 0 rgb(0 0 0 / 8%);\n}\n\n/* --------------------------------------------------------------- 开关 */\n\n.dshb-switch {\n  position: relative;\n  width: 36px;\n  height: 20px;\n  padding: 0;\n  cursor: pointer;\n  border: 0;\n  border-radius: 999px;\n  /* 胶囊：superellipse 会让两端不再是半圆 */\n  corner-shape: round;\n  background-color: var(--dsw-alias-interactive-bg-active);\n  transition: background-color var(--ds-transition-duration-fast)\n    var(--ds-ease-in-out);\n}\n\n.dshb-switch[aria-checked='true'] {\n  background-color: var(--dsw-alias-state-business-primary);\n}\n\n.dshb-switch-thumb {\n  position: absolute;\n  top: 2px;\n  left: 2px;\n  width: 16px;\n  height: 16px;\n  border-radius: 50%;\n  /* 正圆：同上 */\n  corner-shape: round;\n  background-color: var(--dsw-alias-switch-thumb);\n  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 24%);\n  transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out);\n}\n\n.dshb-switch[aria-checked='true'] .dshb-switch-thumb {\n  transform: translateX(16px);\n}\n\n/* --------------------------------------------------------------- 可读性读数 */\n\n/* v1.2 新增：把「这套配色读不读得出来」从一句承诺变成面板上的数字。\n   样式刻意做成「徽标」而不是「控件」—— 它是只读状态，点不动，\n   因此不用按钮的语义，也不该有 hover 反馈。 */\n.dshb-metric {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  padding: 3px 8px;\n  border-radius: var(--dsw-radius-sm);\n  corner-shape: round;\n  font-family: var(--ds-font-family-code);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  background-color: var(--dsw-alias-bg-layer-3);\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n/* 数字用等宽字形并加粗：它是这一行里唯一需要被「读到」的内容 */\n.dshb-metric-value {\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  font-variant-numeric: tabular-nums;\n}\n\n.dshb-metric-tag {\n  font-family: var(--dsw-font-family);\n  font-size: 11px;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n/* 不达标时才变红。用错误色令牌而不是写死红色，跟随主题；\n   加粗边框让小尺寸下也能一眼看出状态差异（不是只靠颜色）。 */\n.dshb-metric-bad {\n  border-color: var(--dsw-alias-state-error-primary);\n  color: var(--dsw-alias-state-error-primary);\n}\n\n.dshb-metric-bad .dshb-metric-tag {\n  color: var(--dsw-alias-state-error-primary);\n}\n\n/* --------------------------------------------------------------- 页脚 */\n\n.dshb-foot {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.dshb-foot-note {\n  display: flex;\n  align-items: center;\n  flex-wrap: wrap;\n  gap: 8px;\n}\n\n/* 版本号：插件走热替换，没有可见版本号就只能靠猜「我到底装上了没有」 */\n.dshb-version {\n  flex: none;\n  padding: 1px 6px;\n  border-radius: 999px;\n  corner-shape: round;\n  font-family: var(--ds-font-family-code);\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-secondary);\n  background-color: var(--dsw-alias-bg-layer-3);\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.dshb-reset {\n  flex: none;\n  padding: 5px 12px;\n  font: inherit;\n  font-size: 12px;\n  cursor: pointer;\n  color: var(--dsw-alias-label-secondary);\n  background-color: transparent;\n  border: 1px solid var(--dsw-alias-border-l3);\n  border-radius: var(--dsw-radius-sm);\n}\n\n.dshb-reset:hover {\n  color: var(--dsw-alias-label-primary);\n  background-color: var(--dsw-alias-interactive-bg-hover);\n}\n\n/* 尊重系统的减少动效偏好：本插件自己的过渡也一并停掉 */\n@media (prefers-reduced-motion: reduce) {\n  .dshb-switch,\n  .dshb-switch-thumb {\n    transition: none;\n  }\n}\n"]
 ]
@@ -1985,7 +2655,8 @@ const SOURCE = 'dsh-ui-beautify'
 const KNOWN = {
   preset: PRESETS.map((p) => p.id),
   accent: ACCENTS.map((a) => a.id),
-  radius: RADIUS_SCALES.map((r) => r.id)
+  radius: RADIUS_SCALES.map((r) => r.id),
+  corner: CORNER_SHAPES.map((c) => c.id)
 }
 
 /**
@@ -2009,7 +2680,8 @@ const FLAGS = {
  */
 const SELECTORS = {
   preset: 'data-dshb-preset',
-  radius: 'data-dshb-radius'
+  radius: 'data-dshb-radius',
+  corner: 'data-dshb-corner'
 }
 
 /**
@@ -2037,9 +2709,31 @@ function createController(options) {
    * 用户交互照常有过渡。
    */
   let motionReady = false
+  /**
+   * 是否已经卸载。
+   *
+   * 卸载之后**一切投射都要停**，这不是防御性编程，而是一条真实存在的路径：
+   * 首帧那次 `requestAnimationFrame` 排在队列里，HMR 在同一个 tick 内卸载并重载
+   * （dsh-client-hmr 每 500ms 轮询一次），或者窗口不可见时 rAF 被无限期推迟 ——
+   * 回调随后执行，会把 7 个 `data-dshb-*` 属性重新写到 `<html>` 上，
+   * 而那些属性是插件对外的公开接口，**没有任何东西会再清掉它们**。
+   */
+  let disposed = false
+  /** 首帧回调的句柄，卸载时用它取消排队中的那一帧。 */
+  let rafHandle = null
+  /**
+   * 宿主令牌层的撤回函数。
+   *
+   * `theme.overrideTokens(source, tokens)` 的返回值是**唯一**的撤回入口：
+   * 宿主只把层存进内部表，不会在插件卸载时替我们删。v1.2 丢弃了这个返回值，
+   * 于是 README 承诺的「卸载零残留」只做到了样式标签与属性那一半 ——
+   * 配色令牌会一直留在宿主的主题服务里，直到进程结束。
+   */
+  let tokenDisposer = null
 
   /** 通知所有订阅者。面板以整对象替换触发重渲染。 */
   function emit() {
+    if (disposed) return
     const snapshot = { ...state }
     for (const listener of listeners) {
       try {
@@ -2052,6 +2746,7 @@ function createController(options) {
 
   /** 把状态投射到 <html> 属性上；总开关关闭时清空全部属性。 */
   function projectAttributes() {
+    if (disposed) return
     if (!doc?.documentElement) return
     const root = doc.documentElement
     for (const [key, attribute] of Object.entries(FLAGS)) {
@@ -2088,16 +2783,26 @@ function createController(options) {
   }
 
   /**
-   * 把外观推给宿主。令牌层永远保持存在（哪怕空对象）而不是反复增删，
-   * 这样「关闭 → 打开」不会在宿主侧留下需要跟踪的悬挂 disposer。
+   * 把外观推给宿主。
+   *
+   * 令牌层在**开关关闭**时推空对象而不是撤回整层：这样「关闭 → 打开」不会在宿主侧
+   * 留下需要跟踪的悬挂 disposer，界面照样回到官方原样。
+   * 但**卸载**是另一回事 —— 那时必须真的把层删掉，见 mount() 的 disposer，
+   * 因此这里要把宿主返回的撤回函数记下来。
    */
   function projectTokens() {
+    if (disposed) return
     if (!theme || typeof theme.overrideTokens !== 'function') return
-    theme.overrideTokens(SOURCE, state.enabled ? buildTokens(state) : {})
+    const disposer = theme.overrideTokens(
+      SOURCE,
+      state.enabled ? buildTokens(state) : {}
+    )
+    if (typeof disposer === 'function') tokenDisposer = disposer
   }
 
   /** 全量投射一次。 */
   function project() {
+    if (disposed) return
     projectAttributes()
     projectTokens()
     if (state.enabled) mountStyles()
@@ -2145,7 +2850,8 @@ function createController(options) {
       // 没有 requestAnimationFrame 的环境（例如无头测试替身）直接视为就绪。
       const raf = globalThis.requestAnimationFrame
       if (typeof raf === 'function') {
-        raf(() => {
+        rafHandle = raf(() => {
+          rafHandle = null
           motionReady = true
           projectAttributes()
         })
@@ -2154,7 +2860,32 @@ function createController(options) {
         projectAttributes()
       }
       return () => {
+        // 顺序有意如此：先立起 disposed，让任何**已经排队**的回调变成空操作，
+        // 再取消还没执行的那一帧，最后才回收三条落点。
+        disposed = true
+        if (rafHandle !== null && typeof globalThis.cancelAnimationFrame === 'function') {
+          globalThis.cancelAnimationFrame(rafHandle)
+        }
+        rafHandle = null
+        listeners.clear()
         unmountStyles()
+        // 令牌层：优先用它自己的 disposer 撤回（宿主唯一的删除入口）；
+        // 宿主若没返回函数（契约允许），退而推一个空层 —— 两条路都能让
+        // 界面回到官方原样，而不是把配色留在宿主的主题服务里。
+        if (typeof tokenDisposer === 'function') {
+          try {
+            tokenDisposer()
+          } catch {
+            /* 宿主可能已经先一步回收了这一层 */
+          }
+          tokenDisposer = null
+        } else if (theme && typeof theme.overrideTokens === 'function') {
+          try {
+            theme.overrideTokens(SOURCE, {})
+          } catch {
+            /* 卸载路径上的异常不应中断属性清理 */
+          }
+        }
         if (doc?.documentElement) {
           for (const attribute of [
             ...Object.values(FLAGS),
@@ -2173,7 +2904,7 @@ function createController(options) {
  * 本文件由 scripts/build.mjs 生成，请勿手工编辑。
  * 版本号的事实来源是 package.json。
  */
-const VERSION = "1.2.0"
+const VERSION = "1.3.0"
 
 // ---- src/client/panel.js -----------------------------------------
 /**
@@ -2433,6 +3164,18 @@ function BeautifyPanel(props) {
         })
       ),
 
+      h(
+        Row,
+        { title: t('corner'), hint: t('cornerHint') },
+        h(Segmented, {
+          label: t('corner'),
+          value: state.corner,
+          disabled,
+          options: CORNER_SHAPES,
+          onChange: (id) => update({ corner: id })
+        })
+      ),
+
       h(Readability, { state, t }),
 
       h(
@@ -2526,6 +3269,8 @@ const zh = {
   accentHint: '用于主按钮、选中态与链接',
   radius: '圆角',
   radiusHint: '影响卡片、输入框与弹层',
+  corner: '圆角形状',
+  cornerHint: '圆角是正圆还是方圆形；圆形按钮与胶囊始终是正圆',
   readability: '可读性',
   readabilityHint: '全部文字与底色的对比度下限（WCAG AA）',
   readabilityWorst: '最低',
@@ -2557,6 +3302,8 @@ const en = {
   accentHint: 'Used for primary buttons, selection and links',
   radius: 'Corner radius',
   radiusHint: 'Affects cards, inputs and popovers',
+  corner: 'Corner shape',
+  cornerHint: 'Round or squircle corners; circles and pills stay round',
   readability: 'Legibility',
   readabilityHint: 'Lowest text-on-surface contrast across the palette (WCAG AA)',
   readabilityWorst: 'Lowest',

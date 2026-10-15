@@ -174,8 +174,13 @@ function createContextStub() {
       },
       theme: {
         overrideTokens(source, tokens) {
-          calls.tokens.push({ source, tokens })
-          return () => {}
+          // 宿主真实契约：返回值是**唯一**的删层入口。替身照此实现，
+          // 否则「卸载有没有把层交还回去」这件事根本观察不到。
+          const entry = { source, tokens, retracted: false }
+          calls.tokens.push(entry)
+          return () => {
+            entry.retracted = true
+          }
         }
       }
     }
@@ -221,7 +226,14 @@ function setup(options = {}) {
     removeItem: (key) => store.delete(key)
   }
   const { document, attributes, head } = createDocumentStub()
-  const { exports, react } = loadPlugin({ document, localStorage })
+  // `globals` 用来把宿主环境里才有的东西（例如 requestAnimationFrame）注入 bundle
+  // 所在的 vm 沙箱 —— 沙箱里的 globalThis 与测试进程的不是同一个，
+  // 直接改外层的 globalThis 是看不见的（这一条踩过）。
+  const { exports, react } = loadPlugin({
+    document,
+    localStorage,
+    ...(options.globals ?? {})
+  })
   const { ctx, calls, disposers } = createContextStub()
   exports.apply({ ...ctx, document })
   return {
@@ -507,8 +519,15 @@ test('设置面板渲染出完整结构，且每个交互控件都可点', () =>
   ]) {
     assert.ok(classes.has(required), `面板缺少结构节点 ${required}`)
   }
-  // 4 预设 + 7 强调色 + 3 圆角 + 4 开关 + 1 重置 都应有可点元素
-  assert.ok(handlers.length >= 19, `可点控件只有 ${handlers.length} 个，少于预期`)
+  // 4 预设 + 7 强调色 + 3 圆角 + 3 圆角形状 + 6 开关 + 1 重置 都应有可点元素。
+  // 这个数字是**精确**的：v1.2 写的是 `>= 19` 而当时实际已有 21 个，
+  // 于是新增控件永远不会让它失败 —— 一条只贡献数字的断言。
+  // 现在按控件清单算：4 + 7 + 3 + 3 + 6 + 1 = 24，少一个就说明某个分组没渲染出来。
+  assert.equal(
+    handlers.length,
+    24,
+    `可点控件应有 24 个（4 预设 + 7 强调色 + 3 圆角 + 3 圆角形状 + 6 开关 + 1 重置），实际 ${handlers.length}`
+  )
   // 渲染函数按官方惯例不接受调用方 props（闭包持有 t），因此这里验证的是
   // 「词典缺失时回落到内置中文」这条真实路径，而不是测试自造的文案。
   assert.ok(
@@ -707,7 +726,30 @@ test('每个预设 × 强调色 × 明暗都满足可读性契约', () => {
         0,
         `${preset.id}/${accent.id} 有取不到值的配对`
       )
-      assert.ok(report.worst.ratio >= 1.3, '最低一项不应低于非文字档底线')
+      // 这里原本是 `report.worst.ratio >= 1.3` —— 一条**永远不可能失败**的断言：
+      // 契约里最松的阈值是 2（`tooltip-key-legibility`），任何低于 1.3 的值
+      // 必然先让上面的 `failures.length === 0` 炸掉。它只贡献了一个数字。
+      // 换成一条真的可能失败的：读数必须是**真的最小值** ——
+      // 面板上那句「最低 x:1」就是照它显示的，取错一项就会骗人。
+      const scored = [...report.light.checks, ...report.dark.checks].filter(
+        (entry) => entry.ratio !== null
+      )
+      const trueWorst = scored.reduce(
+        (low, entry) => (entry.ratio < low.ratio ? entry : low)
+      )
+      assert.equal(
+        report.worst.id,
+        trueWorst.id,
+        `worst 读数取错了项：报的是 ${report.worst.id}，真正最低的是 ${trueWorst.id}`
+      )
+      const bodyWorst = scored
+        .filter((entry) => entry.kind === 'text' && entry.min >= 4.5)
+        .reduce((low, entry) => (entry.ratio < low.ratio ? entry : low))
+      assert.equal(
+        report.worstBody.id,
+        bodyWorst.id,
+        `正文级 worstBody 取错了项：报的是 ${report.worstBody.id}，真正最低的是 ${bodyWorst.id}`
+      )
     }
   }
   assert.ok(checks > 2000, `契约断言次数过少（${checks}），检查项可能没跑全`)
@@ -881,4 +923,231 @@ test('面板渲染出可读性读数，且读数与契约一致', () => {
   )
   // 默认预设组合必须达标，因此不应出现「未达标」状态
   assert.ok(!classes.has('dshb-metric-bad'), '默认组合不应处于未达标状态')
+})
+
+// ============================================================ v1.3 新增
+
+test('圆角形状独立投射，并与宿主默认档对齐', async () => {
+  const presets = await import(
+    new URL('../src/client/presets.js', import.meta.url).href
+  )
+  const { CORNER_SHAPES } = presets
+  const { calls, controller } = setup()
+
+  // 跨 realm 比较：bundle 跑在 vm 沙箱里，它产出的对象原型与测试进程的不是同一个，
+  // `deepStrictEqual` 会因此失败（值明明一样）。逐字段比较才是这里该做的事。
+  const cornerOf = () => calls.tokens.at(-1).tokens['--dsw-corner-shape']
+  const initial = cornerOf()
+  assert.equal(initial.light, 'superellipse(1.5)')
+  assert.equal(initial.dark, 'superellipse(1.5)')
+  // 明暗取同值：形状不是颜色，不该随主题变
+  for (const shape of CORNER_SHAPES) {
+    controller.setState({ corner: shape.id })
+    const value = cornerOf()
+    assert.equal(value.light, shape.css, `${shape.id} 未投射到 light`)
+    assert.equal(value.dark, shape.css, `${shape.id} 未投射到 dark`)
+  }
+  // 非法档位被归一化挡掉，不会写进令牌层
+  controller.setState({ corner: 'not-a-shape' })
+  assert.equal(cornerOf().light, 'superellipse(1.5)', '非法圆角形状必须回落到默认档')
+
+  // 形状只动这一个令牌：切档不得顺手改掉半径
+  const before = calls.tokens.at(-1).tokens
+  controller.setState({ corner: 'round' })
+  const after = calls.tokens.at(-1).tokens
+  const changed = Object.keys(after).filter(
+    (name) => JSON.stringify(after[name]) !== JSON.stringify(before[name])
+  )
+  assert.deepEqual(changed, ['--dsw-corner-shape'], `切圆角形状只应改一个令牌，实际改了 ${changed}`)
+})
+
+test('卸载会把令牌层交还宿主，而不只是清掉样式与属性', () => {
+  // v1.2 丢弃了 `theme.overrideTokens()` 的返回值，而宿主**只**通过那个函数删层。
+  // 结果是卸载之后样式标签与属性都没了，配色却还留在宿主的主题服务里 ——
+  // README 里「卸载零残留」这半句话不成立。
+  const { calls, disposers, attributes } = setup()
+  const layer = calls.tokens.at(-1)
+  assert.equal(layer.retracted, false, '挂载期间令牌层应当是生效的')
+
+  for (const dispose of disposers) dispose()
+
+  assert.equal(layer.retracted, true, '卸载必须调用宿主返回的撤回函数，把令牌层删掉')
+  assert.equal(attributes.size, 0, '卸载后不应残留 data-dshb-* 属性')
+
+  // 卸载之后再改状态：既不该再投射令牌，也不该再写属性
+  const projections = calls.tokens.length
+  const controller = calls.sections[0]?.definition.inject().controller
+  controller.setState({ accent: 'teal' })
+  assert.equal(calls.tokens.length, projections, '卸载后不得再向宿主投射令牌')
+  assert.equal(attributes.size, 0, '卸载后不得再写回属性')
+})
+
+test('卸载之后，排队中的首帧回调不会把属性写回去', () => {
+  // 首帧回调排在 rAF 队列里，HMR 在同一个 tick 内卸载并重载 —— 或者窗口不可见时
+  // rAF 被无限期推迟。v1.2 没有取消它，也没有 disposed 标志，于是回调执行时
+  // 把 7 个 data-dshb-* 属性重新写到 <html> 上，而那些属性是插件的公开接口，
+  // 没有任何东西会再清掉它们。测试替身此前**没有** requestAnimationFrame，
+  // 因此永远走同步分支，这条路径从未被测到。
+  const queued = []
+  const cancelled = []
+  const { attributes, disposers } = setup({
+    globals: {
+      requestAnimationFrame: (fn) => {
+        queued.push(fn)
+        return queued.length
+      },
+      cancelAnimationFrame: (id) => cancelled.push(id)
+    }
+  })
+  assert.equal(queued.length, 1, '首帧回调应恰好排队一次')
+  assert.equal(
+    attributes.has('data-dshb-motion'),
+    false,
+    '首帧之前不应投射动效属性（否则「换装」会被渲染成一段可见的淡入）'
+  )
+  for (const dispose of disposers) dispose()
+  assert.equal(attributes.size, 0, '卸载时应清空全部属性')
+  assert.equal(cancelled.length, 1, '卸载时应取消排队中的那一帧')
+  // 即使那一帧还是跑了（取消没生效、或回调正在执行中），它也必须什么都不做
+  for (const fn of queued) fn()
+  assert.equal(
+    attributes.size,
+    0,
+    `卸载后执行排队中的回调不得写回属性，实际残留：${[...attributes.keys()].join(', ')}`
+  )
+})
+
+test('求解器对中间调背景不再走进方向死区', () => {
+  // v1.2 用 `luminance(against) > 0.4` 决定压暗还是提亮。背景亮度落在
+  // (0.183, 0.4] 之间时它会选「提亮」，而提亮最多到 1.05/(L+0.05) ——
+  // 对 #a8a8a8 只有 2.42，永远够不到 4.5；同一时刻压暗能到 8.83。
+  // 于是求解器对一个**有解**的约束返回 null。
+  const solved = solveColor('#808080', [{ against: '#a8a8a8', target: 4.5 }])
+  assert.notEqual(solved, null, '中间调背景有解，不该返回 null')
+  assert.ok(
+    contrast(solved, '#a8a8a8') >= 4.5,
+    `解出的 ${solved} 对 #a8a8a8 只有 ${contrast(solved, '#a8a8a8').toFixed(2)}`
+  )
+  // 真正无解的仍然必须是 null：两端都够不着目标
+  assert.equal(solveColor('#808080', [{ against: '#a8a8a8', target: 9 }]), null)
+  // 方向冲突仍然必须是 null
+  assert.equal(
+    solveColor('#808080', [
+      { against: '#ffffff', target: 4.5 },
+      { against: '#000000', target: 4.5 }
+    ]),
+    null
+  )
+})
+
+test('语义色取代了宿主那三个「读不清的语气」，且色相没被换掉', async () => {
+  const { calls, controller } = setup()
+  // 宿主 Tag 的成功 / 警告 / 危险语气：底是自身 10%（警告 12%）的淡染层。
+  const hostSeeds = { success: '#22c55e', warn: '#f59e0b', error: '#ec1313' }
+  for (const mode of ['light', 'dark']) {
+    for (const [key, seed] of Object.entries(hostSeeds)) {
+      const tokens = calls.tokens.at(-1).tokens
+      const value = tokens[`--dsw-alias-state-${key}-primary`][mode]
+      const layer = tint(tokens['--dsw-alias-bg-layer-1'][mode], value, key === 'warn' ? 0.12 : 0.1)
+      const ratio = contrast(value, layer)
+      assert.ok(
+        ratio >= 4.5,
+        `${key}(${mode}) 压在自己的淡染层上只有 ${ratio.toFixed(2)}：${value} on ${layer}`
+      )
+      // 色相必须留在约定色域里：绿还是绿、琥珀还是琥珀、红还是红
+      const hue = toHsl(value).h
+      const ok =
+        key === 'success'
+          ? hue >= 80 && hue <= 180
+          : key === 'warn'
+            ? hue >= 20 && hue <= 70
+            : hue >= 330 || hue <= 25
+      assert.ok(ok, `${key} 解出了 ${value}（色相 ${hue.toFixed(0)}°），跑出了约定色域`)
+      // 必须真的与宿主种子不同 —— 否则说明求解器什么都没做（宿主那支是不达标的）
+      if (mode === 'light') {
+        assert.notEqual(value, seed, `浅色下 ${key} 应与宿主种子不同（宿主的取值不达标）`)
+      }
+    }
+  }
+  // 危险色当底色时（.brokenBadge）要扛得住一支表面色作为文字
+  const tokens = calls.tokens.at(-1).tokens
+  for (const mode of ['light', 'dark']) {
+    const ratio = contrast(
+      tokens['--dsw-alias-bg-layer-3'][mode],
+      tokens['--dsw-alias-state-error-primary'][mode]
+    )
+    assert.ok(ratio >= 4.5, `危险徽标文字(${mode}) 只有 ${ratio.toFixed(2)}`)
+  }
+  void controller
+})
+
+test('宿主缺失的两个令牌被补上（错误提示与第四级表面）', () => {
+  // 这两个令牌宿主从未声明，却有组件在消费：
+  //   · --dsw-alias-label-error → `color: var(…)` 变成 guaranteed-invalid，
+  //     color 按 unset 处理（继承），「保存失败」看起来和普通文字一样；
+  //   · --dsw-alias-bg-layer-4  → 悬停底色落到 initial（transparent）。
+  const { calls } = setup()
+  const tokens = calls.tokens.at(-1).tokens
+  for (const token of ['--dsw-alias-label-error', '--dsw-alias-bg-layer-4']) {
+    assert.ok(tokens[token], `${token} 必须被补上`)
+    assert.equal(typeof tokens[token].light, 'string')
+    assert.equal(typeof tokens[token].dark, 'string')
+  }
+  // 补的值必须真的可用：错误文字要压在设置卡片（bg-layer-2）上达 AA
+  for (const mode of ['light', 'dark']) {
+    const ratio = contrast(tokens['--dsw-alias-label-error'][mode], tokens['--dsw-alias-bg-layer-2'][mode])
+    assert.ok(ratio >= 4.5, `错误提示文字(${mode}) 只有 ${ratio.toFixed(2)}`)
+    // 第四级表面必须与第二级可分辨 —— 它就是「悬停时那一点可见的差」
+    const wash = contrast(tokens['--dsw-alias-bg-layer-4'][mode], tokens['--dsw-alias-bg-layer-2'][mode])
+    assert.ok(wash > 1.02, `bg-layer-4 与 bg-layer-2 只差 ${wash.toFixed(3)}，悬停看不出来`)
+  }
+})
+
+test('悬停淡染层之上的文字也不掉出档位', async () => {
+  // 宿主动辄把 `--dsw-alias-interactive-bg-hover` 铺在文字底下（Menu 的 .item:hover，
+  // 同一行里还有 11px 的快捷键文字）。深色模式下强调色是亮色，12% 罩层把深底提亮，
+  // 于是同一段灰字的有效底变亮 —— v1.2 的契约只认平面表面，这类底从未被算过。
+  const presets = await import(
+    new URL('../src/client/presets.js', import.meta.url).href
+  )
+  const washes = { light: [0.08, 0.14], dark: [0.12, 0.2] }
+  const tiers = [
+    ['--dsw-alias-label-secondary', TEXT_TIERS.secondary],
+    ['--dsw-alias-label-tertiary', TEXT_TIERS.tertiary],
+    ['--dsw-alias-label-caption', TEXT_TIERS.caption]
+  ]
+  let worst = { ratio: Infinity, where: '' }
+  for (const preset of PRESETS) {
+    for (const accent of presets.ACCENTS) {
+      const tokens = buildTokens({
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        corner: 'squircle',
+        ambient: true,
+        motion: true,
+        typography: true,
+        taskList: true,
+        glass: true
+      })
+      for (const mode of ['light', 'dark']) {
+        for (const surface of ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-layer-2']) {
+          for (const amount of washes[mode]) {
+            const hovered = tint(tokens[surface][mode], tokens['--dsw-alias-brand-primary'][mode], amount)
+            for (const [token, target] of tiers) {
+              const ratio = contrast(tokens[token][mode], hovered)
+              if (ratio < worst.ratio) {
+                worst = { ratio, where: `${preset.id}/${accent.id}/${mode} ${token} on ${hovered}` }
+              }
+              assert.ok(
+                ratio >= target,
+                `${worst.where}：${ratio.toFixed(2)} < ${target}`
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(worst.ratio >= 3, `悬停底上的文字最低 ${worst.ratio.toFixed(2)}`)
 })

@@ -48,12 +48,17 @@ html[data-dshb-tasklist='on']
 
 /* 进行中：这一行是「现在正在做的事」，给它最强的视觉权重。
    左右各 6px 的负外边距与内边距配成一对，行被撑宽了 12px 又收回 12px，
-   状态点与文字的横向位置与其他行严格对齐。 */
+   状态点与文字的横向位置与其他行严格对齐。
+
+   **不要在这里写 border-radius**：宿主的面板列表是 `overflow-y: auto` 的滚动容器
+   （`overflow-x` 因此计算成 auto），行盒宽出容器 12px、左右各 6px 落在容器的
+   内边距盒之外被裁掉 —— 高亮带是**通栏**的，圆角永远不可见。
+   v1.2 写了 `border-radius: var(--dsw-radius-xs)`，那是一行死代码；
+   真正可见的后果是那 6px 溢出变成了**一条横向滚动条**（见下面的 ul 规则）。 */
 html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] li[data-status='in_progress'] {
   position: relative;
   margin-inline: -6px;
   padding-inline: 6px;
-  border-radius: var(--dsw-radius-xs);
   background: var(--dsw-alias-interactive-bg-hover-accent);
   color: var(--dsw-alias-label-primary);
   font-weight: 500;
@@ -78,11 +83,16 @@ html[data-dshb-tasklist='on']
    另外两档的差异才有参照物。 */
 
 /* ------------------------------------------------------------------ *
- * 2. 列表溢出：底部渐隐
+ * 2. 列表溢出：底部渐隐 + 横向溢出封口
  * ------------------------------------------------------------------ */
 
+/* `overflow-x: hidden` 不是装饰，是上面那条负外边距的**收尾**：宿主的列表容器是
+   `overflow-y: auto`，按规范 `overflow-x` 会计算成 `auto`，于是行盒宽出的 12px
+   变成了真实的横向滚动溢出 —— 实测 6px 溢出、面板底下多一条横向滚动条。
+   把横向封掉之后，那条通栏高亮带仍然通栏，只是不再能把列表拖来拖去。 */
 html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] ul {
   padding-block-end: 12px;
+  overflow-x: hidden;
   mask-image: linear-gradient(
     to bottom,
     #000 calc(100% - 12px),

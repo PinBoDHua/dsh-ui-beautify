@@ -299,12 +299,53 @@ export function solveColor(color, requirements) {
     list.every((item) => contrast(candidate, item.against) >= item.target)
   if (passes(base)) return base
 
-  const directions = new Set(
-    list.map((item) => (luminance(item.against) > LIGHT_SIDE_THRESHOLD ? 'darken' : 'lighten'))
-  )
-  if (directions.size > 1) return null
+  /**
+   * 方向由**哪一端真的够得着目标**决定，而不是由背景落在阈值哪一侧决定。
+   *
+   * v1.2 用的是 `luminance(against) > 0.4 ? 压暗 : 提亮`。那是一条**有死区的规则**：
+   * 背景亮度落在 (0.183, 0.4] 之间时它选「提亮」，而提亮最多只能到
+   * `1.05 / (L + 0.05)` —— 对 L = 0.3 只有 3.0，永远够不到 4.5；同一时刻压暗
+   * 却能到 7.0。于是求解器对一个**有解**的约束返回 `null`：
+   *
+   *   solveColor('#808080', [{ against: '#a8a8a8', target: 4.5 }])   // v1.2 → null
+   *
+   * 现在的判据是两端各自的**可达上限**：压暗到纯黑给 `(L + 0.05) / 0.05`，
+   * 提亮到纯白给 `1.05 / (L + 0.05)`。哪一端够得着就往哪端走；两端都够不着 →
+   * 无解；两端都够得着 → 回到「背景落在哪一侧」做平局判定（保留原来的取向，
+   * 只是它不再独占决策权）。
+   *
+   * 对当前全部输入，两种算法给出同一个方向（极亮的底只有压暗能到 4.5，
+   * 极暗的底只有提亮能到），因此这是一处**只修死区、不改现状**的改动；
+   * `tests/runtime.test.mjs` 有一条用上面那个最小复现钉住它。
+   */
+  const reachable = (item, direction) => {
+    const background = luminance(item.against)
+    const best =
+      direction === 'darken'
+        ? (background + 0.05) / 0.05
+        : 1.05 / (background + 0.05)
+    return best >= item.target
+  }
+  let needDarken = false
+  let needLighten = false
+  let bothAllowedEverywhere = true
+  for (const item of list) {
+    const byDarken = reachable(item, 'darken')
+    const byLighten = reachable(item, 'lighten')
+    // 两端都够不着：这条约束本身就无解，任何方向都不会成功
+    if (!byDarken && !byLighten) return null
+    if (!byLighten) needDarken = true
+    if (!byDarken) needLighten = true
+    if (!(byDarken && byLighten)) bothAllowedEverywhere = false
+  }
+  // 同时存在「只能压暗」与「只能提亮」→ 方向冲突，无解。
+  // 严格说中调色偶尔能同时满足两端，但那要求候选解越过背景自身的明度 ——
+  // 正是二分搜索不成立的那段区间，因此按无解处理、交由构建期断言暴露。
+  if (needDarken && needLighten) return null
+  const darken = bothAllowedEverywhere
+    ? list.every((item) => luminance(item.against) > LIGHT_SIDE_THRESHOLD)
+    : needDarken
 
-  const darken = directions.has('darken')
   const { h, s, l } = toHsl(base)
   let lo = darken ? 0 : l
   let hi = darken ? l : 1

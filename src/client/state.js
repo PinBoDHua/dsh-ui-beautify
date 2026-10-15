@@ -19,6 +19,7 @@ export const DEFAULT_STATE = Object.freeze({
   preset: 'aurora',
   accent: 'deepseek',
   radius: 'standard',
+  corner: 'squircle',
   ambient: true,
   motion: true,
   typography: true,
@@ -34,7 +35,7 @@ const BOOLEAN_KEYS = [
   'taskList',
   'glass'
 ]
-const STRING_KEYS = ['preset', 'accent', 'radius']
+const STRING_KEYS = ['preset', 'accent', 'radius', 'corner']
 
 /**
  * 把任意输入归一化成合法状态：未知键丢弃、非法值回落默认值。
@@ -57,7 +58,10 @@ export function normalizeState(raw, options) {
     const allowed = known[key]
     const value = source[key]
     if (typeof value !== 'string') continue
-    if (Array.isArray(allowed) && allowed.length > 0) {
+    // 只有在 `known` **完全没有**提供这个键时才放行任意字符串（无选项的调用路径）。
+    // 提供了一张空表意味着「这个键目前没有合法取值」，那就应当回落默认值 ——
+    // 旧写法把空表当成「没有约束」，于是一张空表会把拼错的值原样放进去。
+    if (Array.isArray(allowed)) {
       if (allowed.includes(value)) next[key] = value
     } else {
       next[key] = value

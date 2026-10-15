@@ -31,6 +31,21 @@ const { STYLES } = await import(
 )
 const STYLE_COUNT = STYLES.length
 
+/**
+ * 控制器会在 `<html>` 上投射多少个属性。
+ *
+ * 同样不写死：新增一个开关（例如 data-dshb-tasklist）就多一个，
+ * 写死会让「卸载残留」那条测试以无关原因失败。直接从控制器源码里数
+ * `'data-dshb-…'` 字面量，声明了几个就断言几个。
+ */
+const ATTRIBUTE_COUNT = new Set(
+  [
+    ...readFileSync(join(ROOT, 'src', 'client', 'controller.js'), 'utf8').matchAll(
+      /'(data-dshb-[a-z-]+)'/g
+    )
+  ].map((match) => match[1])
+).size
+
 // ------------------------------------------------------------- React 替身
 
 /**
@@ -331,6 +346,24 @@ test('各开关独立生效，互不串台', () => {
   )
 })
 
+test('任务列表增强开关独立投射属性，关闭时不残留', () => {
+  const { attributes, controller } = setup()
+  assert.equal(
+    attributes.get('data-dshb-tasklist'),
+    'on',
+    '任务列表增强默认开启，应投射 data-dshb-tasklist'
+  )
+
+  controller.setState({ taskList: false })
+  assert.equal(attributes.has('data-dshb-tasklist'), false)
+  // 不能牵连别的开关
+  assert.equal(attributes.get('data-dshb-typography'), 'on')
+  assert.equal(attributes.get('data-dshb-ambient'), 'on')
+
+  controller.setState({ taskList: true })
+  assert.equal(attributes.get('data-dshb-tasklist'), 'on')
+})
+
 test('圆角档位改变全部半径令牌与内容区圆角，明暗取同值', () => {
   const { calls, controller } = setup()
   assert.equal(calls.tokens.at(-1).tokens['--dsw-radius-md'].light, '12px')
@@ -477,7 +510,7 @@ test('设置面板渲染出完整结构，且每个交互控件都可点', () =>
 test('插件卸载后不残留任何全局副作用', () => {
   const { head, attributes, disposers } = setup()
   assert.equal(head.children.length, STYLE_COUNT)
-  assert.equal(attributes.size, 6)
+  assert.equal(attributes.size, ATTRIBUTE_COUNT, '开启时投射的属性数应与控制器声明一致')
 
   for (const dispose of disposers) dispose()
 

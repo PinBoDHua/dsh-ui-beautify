@@ -61,6 +61,35 @@
 
 ![圆角画廊](verify/out/radius-official-light.png)
 
+### 任务列表增强
+
+宿主的任务面板（composer 上方的「任务 N 已完成 · M 进行中 · K 待处理」）三态在视觉上
+几乎不可分：任务项文字**恒为同一种灰**，状态只由一个 6px 状态点承担 —— 已完成绿点、
+进行中转圈、待处理灰点。十几行排下来扫一眼，得到的印象是「都差不多」，
+于是「到底做完了没有」在面板上读不出来。
+
+插件把状态差从「6px 圆点」放大到「整行可辨」：
+
+| 状态 | 表现 |
+| --- | --- |
+| 已完成 | 文字降权 + 删除线（划线用描边色，不抢正文注意力） |
+| 进行中 | 强调色淡染行底 + 左侧强调条 + 文字加重 |
+| 待处理 | 保持宿主原样 —— 它是基线，另外两档的差异才有参照物 |
+
+顺带修掉列表溢出：`max-height: 180px` 配 28px 行高不是整数倍，最后一行常被硬切成
+两半，且没有任何「还能滚」的提示，看起来像渲染坏了。现在列表底部有 12px 渐隐，
+并在末尾留出与渐隐等高的空白 —— 滚到底时渐隐落在空白上，**最后一行不会被误伤**。
+
+![任务面板](verify/out/compare-panels.png)
+
+全部通过宿主有意暴露的 `data-testid="todo-panel"` 与 `data-status`
+（`completed | in_progress | pending` 封闭联合）定位，**不碰任何编译哈希类名**。
+
+> **一个必须说清的边界**：面板头部的计数由宿主的 todo 投影直接决定。
+> 如果它显示「10 待处理」，那是**数据**里确实一条 completed 都没有 ——
+> agent 更新待办时没有标记完成，CSS 变不出完成态。插件只负责让已有状态**读得出来**，
+> 不负责修正数据。
+
 ### 四个预设
 
 | 预设 | 气质 | 适用 |
@@ -163,14 +192,17 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
 
 | 控件 | 说明 |
 | --- | --- |
-| **总开关** | 关闭即整套撤回：令牌层清空、四张样式表移除、`data-dshb-*` 属性清空 |
+| **总开关** | 关闭即整套撤回：令牌层清空、六张样式表移除、`data-dshb-*` 属性清空 |
 | **预设风格** | 四套骨架，各含明暗两套完整配色 |
 | **强调色** | 七个色相；浅色/深色分别调校，不是同一色的透明度变化 |
-| **圆角** | 紧凑 `×0.75` / 标准 `×1` / 圆润 `×1.4`，联动全部 `--dsw-radius-*` |
-| **氛围光** | 侧栏与框架叠一层低透明度光斑 |
+| **圆角** | 紧凑 / 标准 / 圆润三档**逐档设计值**，联动全部 `--dsw-radius-*` |
+| **氛围光** | 侧栏叠一层低透明度光斑 |
 | **内容精修** | 行高、字距、等宽数字、代码块与表格细节 |
+| **任务列表增强** | 三态一眼可辨：已完成降权划线，进行中高亮 |
 | **毛玻璃** | 关闭后菜单改为近乎不透明的实色填充 |
 | **过渡动效** | 仅过渡颜色类属性，绝不加在布局属性上 |
+
+页脚显示**当前版本号**——插件走热替换，没有可见版本号就只能靠猜「我到底装上了没有」。
 
 改动**即时生效**，偏好保存在本机 `localStorage`（键 `dsh-ui-beautify:prefs:v1`），
 不写入会话配置。**恢复默认**一键回到出厂外观。
@@ -220,6 +252,9 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
 
 ## 已知限制
 
+- **插件只让已有状态读得出来，不修正数据**。任务面板若显示「10 待处理」，
+  那是宿主的 todo 投影里确实一条 completed 都没有 —— 需要 agent 更新待办时
+  标记完成，CSS 改不了这个。
 - **氛围光只作用于侧栏**。它曾经也挂在窗口框架上，结果在 Windows 标题栏模式下
   被内容区左上角那个圆角切成一块硬边蓝楔形 —— 框架的 `background-image` 原点
   （`background-origin: padding-box`）恰好就在内容区左上角。现在框架恢复为纯色，
@@ -272,15 +307,19 @@ src/client/presets.js       设计令牌预设表（唯一的配色与几何真�
 src/client/panel.js         设置面板组件（React.createElement，无 JSX）
 src/client/state.js         状态读写与归一化
 src/client/locales.js       中英词典
-src/client/styles/*.css     五张结构层样式表（含 safety.css 安全修正层）
+src/client/styles/*.css     六张结构层样式表
+                            base / elevation / typography / task-list / safety / panel
 scripts/build.mjs           零依赖构建：拼接 + 包成 __ModuleLoader__ 脚本
-scripts/check.mjs           静态审计
+scripts/check.mjs           静态审计（20 项）
+scripts/check-encoding.mjs  编码自检：找出被非 UTF-8 工具改写出乱码的源文件
+scripts/check-reproducible.mjs  可复现性：LF 与 CRLF 检出产物逐字节一致
 scripts/install.mjs         安全安装 / 卸载（默认 dry-run，先备份）
 scripts/host-tokens.mjs     生成宿主令牌基准表（宿主升级后手工跑）
 scripts/audit-caption-collision.mjs   全量排查侵入原生标题栏覆盖层的控件
 scripts/extract-compiled-css.mjs      从宿主编译产物抽取指定 hash 分组的规则
-tests/runtime.test.mjs      运行时集成测试
+tests/runtime.test.mjs      运行时集成测试（14 项）
 verify/                     渲染验证台
+CHANGELOG.md                更新日志
 ```
 
 ---

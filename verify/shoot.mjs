@@ -90,6 +90,21 @@ const SHOTS = [
     size: [900, 560],
     states: ['aurora'],
     modes: ['light']
+  },
+  {
+    // 任务面板 × Markdown 代码块：宿主编译样式下的官方基线 / 插件效果对照。
+    view: 'panels',
+    size: [1080, 470],
+    states: ['official', 'aurora'],
+    modes: ['light', 'dark']
+  },
+  {
+    // 取证夹具：把「给所有 pre 加边框」这条已删除的规则重新套上。
+    view: 'panels',
+    bug: 'pre-border',
+    size: [1080, 470],
+    states: ['aurora'],
+    modes: ['light']
   }
 ]
 

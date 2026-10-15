@@ -67,9 +67,40 @@ python verify/montage.py  # 拼成对比图
 | --- | --- |
 | `?bug=ambient-frame` | 氛围光被挂到窗口框架上，在内容区左上角圆角处切出硬边色块 |
 | `?bug=caption-overlap` | 抽掉 `safety.css`，灯箱关闭按钮落回原生窗口按钮的占位里 |
+| `?bug=pre-border` | 重新给 `<pre>` 加边框，在代码卡片里套出第二层细框 |
 
-`verify/out/compare-corner.png` 与 `verify/out/compare-caption-safety.png` 就是
-这样产出的三格/两格对照 —— 除那一条规则外完全同源，结论才立得住。
+`verify/out/compare-corner.png`、`compare-caption-safety.png`、`compare-panels.png`
+就是这样产出的对照 —— 除那一条规则外完全同源，结论才立得住。
+
+---
+
+## 视图一览
+
+| `view=` | 内容 |
+| --- | --- |
+| `shell`（默认） | 应用外壳：侧栏 + 转录 + composer |
+| `overlay` | 浮层：菜单材质、卡片高度、提示气泡、对话框 |
+| `panel` | 插件自己的设置面板 |
+| `frame` | 真实窗口框架（Windows 标题栏模式 + 中心列圆角） |
+| `radius` | 圆角画廊：三档并排，含不应变化的胶囊对照组 |
+| `lightbox` | 图片灯箱 × 模拟的原生标题栏覆盖层 |
+| `panels` | 任务面板（宿主编译样式）× Markdown 代码块 |
+
+---
+
+## 两条「不要手抄清单」的教训
+
+验证台里有几处必须与插件保持一致，它们**全部从真相来源推导**，不手抄：
+
+| 需要一致的东西 | 真相来源 |
+| --- | --- |
+| 要渲染哪几张插件样式表 | 构建产物 `src/client/styles.generated.js` |
+| `<html>` 上要投射哪些属性 | `src/client/controller.js` 的 FLAGS / SELECTORS |
+| 版本徽标显示什么 | `package.json` 的 `version` |
+
+这三处都真的踩过：样式表清单漏加 `safety.css`、属性清单漏加 `data-dshb-tasklist`
+（任务列表增强因此在验证台里完全不生效，而截图看起来「和官方一样」，
+差点被当成功能没做出来）。**抄一份清单就是多一个必然漂移的地方。**
 
 ---
 

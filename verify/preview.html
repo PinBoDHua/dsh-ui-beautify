@@ -304,6 +304,18 @@
 
           <div class="dshb-row">
             <div class="dshb-row-text">
+              <div class="dshb-row-title">任务列表增强</div>
+              <div class="dshb-row-hint">三态一眼可辨：已完成降权划线，进行中高亮</div>
+            </div>
+            <div class="dshb-row-control">
+              <button class="dshb-switch" role="switch" aria-checked="true">
+                <span class="dshb-switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
               <div class="dshb-row-title">毛玻璃</div>
               <div class="dshb-row-hint">关闭后菜单改为近乎不透明的实色</div>
             </div>
@@ -316,7 +328,10 @@
         </section>
 
         <footer class="dshb-foot">
-          <span>偏好保存在本机浏览器，不写入会话配置。</span>
+          <span class="dshb-foot-note">
+            偏好保存在本机浏览器，不写入会话配置。
+            <span class="dshb-version" id="panel-version">v—</span>
+          </span>
           <button class="dshb-reset">恢复默认</button>
         </footer>
       </div>
@@ -367,6 +382,92 @@
         <button class="_close_1hos8_29" aria-label="关闭预览">&#x2715;</button>
       </div>
     </div>
+
+    <!-- ================= 任务面板 × Markdown 代码块（宿主编译样式） =================
+         两块都用宿主编译产物里的真实哈希类名渲染：
+
+         · TodoPanel（aSus8q_*）—— 结构照 conversation bundle 里的 JSX 复刻：
+             section[data-testid=todo-panel] > .body > (button.header + ul.list > li.item[data-status])
+           状态点用 StateDot 的编译类（_dot_1i3xo_2[data-state=done|idle] 与 spinner
+           三件套），三态各就位，并放足量的 pending 让列表溢出 180px 的 max-height ——
+           那个「最后一行被切成两半」的裁切正是要处理的观感问题。
+
+         · Markdown 代码块（cmarkdownCodeBlock-*，来自源码级 .module.css）——
+           用来取证：宿主把背景与圆角放在 <pre> 上，任何再给 pre 加边框/圆角的
+           规则都会在卡片里套出第二层框。
+    -->
+    <div id="panels-stage" hidden>
+      <div class="pn-col">
+        <div class="pn-label">TodoPanel · 宿主真实编译样式（2 已完成 / 1 进行中 / 5 待处理）</div>
+        <section class="aSus8q_root" data-testid="todo-panel" aria-label="任务">
+          <div class="aSus8q_body">
+            <button type="button" class="aSus8q_header" aria-expanded="true">
+              <span class="aSus8q_lead" aria-hidden="true">&#x2611;</span>
+              <span class="aSus8q_title">任务</span>
+              <span class="aSus8q_progress">2 已完成 · 1 进行中 · 5 待处理</span>
+              <span class="aSus8q_chevron" aria-hidden="true">&#x2303;</span>
+            </button>
+            <ul class="aSus8q_list">
+              <li class="aSus8q_item" data-status="completed">
+                <span class="aSus8q_glyph" role="img" aria-label="已完成"><span class="_dot_1i3xo_2" data-state="done" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">Recon: v1.1 state + session props / toast API research</span>
+              </li>
+              <li class="aSus8q_item" data-status="completed">
+                <span class="aSus8q_glyph" role="img" aria-label="已完成"><span class="_dot_1i3xo_2" data-state="done" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 history.js: sampling ring buffer, pruning, geometry</span>
+              </li>
+              <li class="aSus8q_item" data-status="in_progress">
+                <span class="aSus8q_glyph" role="img" aria-label="进行中"><span class="_spinner_1i3xo_37" style="width: 10px; height: 10px"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><g class="_spinnerMotion_1i3xo_42"><circle class="_spinnerTrack_1i3xo_47" cx="5" cy="5" r="4"></circle><circle class="_spinnerArc_1i3xo_48" cx="5" cy="5" r="4"></circle></g></svg></span></span>
+                <span class="aSus8q_content">v1.2 session-spend.js: per-session baseline &amp; accounting</span>
+              </li>
+              <li class="aSus8q_item" data-status="pending">
+                <span class="aSus8q_glyph" role="img" aria-label="待处理"><span class="_dot_1i3xo_2" data-state="idle" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 alert.js: level-crossing watcher, armed-once semantics</span>
+              </li>
+              <li class="aSus8q_item" data-status="pending">
+                <span class="aSus8q_glyph" role="img" aria-label="待处理"><span class="_dot_1i3xo_2" data-state="idle" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 sparkline.js: SVG trend chart component</span>
+              </li>
+              <li class="aSus8q_item" data-status="pending">
+                <span class="aSus8q_glyph" role="img" aria-label="待处理"><span class="_dot_1i3xo_2" data-state="idle" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 pill.js: panel wiring (spend row, trend, alert toast)</span>
+              </li>
+              <li class="aSus8q_item" data-status="pending">
+                <span class="aSus8q_glyph" role="img" aria-label="待处理"><span class="_dot_1i3xo_2" data-state="idle" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 settings: new toggles + locales + styles</span>
+              </li>
+              <li class="aSus8q_item" data-status="pending">
+                <span class="aSus8q_glyph" role="img" aria-label="待处理"><span class="_dot_1i3xo_2" data-state="idle" style="width: 10px; height: 10px"></span></span>
+                <span class="aSus8q_content">v1.2 docs: changelog + migration note</span>
+              </li>
+            </ul>
+          </div>
+        </section>
+      </div>
+
+      <div class="pn-col">
+        <div class="pn-label">Markdown 代码块 · 宿主真实组件样式</div>
+        <div class="cmarkdownCodeBlock-block">
+          <div class="cmarkdownCodeBlock-bannerWrap">
+            <div class="cmarkdownCodeBlock-banner">
+              <span class="cmarkdownCodeBlock-infostring">typescript</span>
+              <span class="cmarkdownCodeBlock-action">
+                <button type="button" class="cmarkdownCodeBlock-copyButton">复制</button>
+              </span>
+            </div>
+          </div>
+          <pre class="shiki"><code>export function apply(ctx) {
+  ctx.theme.overrideTokens('dsh-ui-beautify', tokens)
+}</code></pre>
+        </div>
+
+        <p class="pn-text">
+          行内代码 <code>ctx.theme.overrideTokens()</code> 与普通文字混排。宿主的代码卡片
+          已自带圆角与底色，任何再给 <code>pre</code> 叠加边框的规则都会在卡片内套出第二层框。
+        </p>
+      </div>
+    </div>
+
 
     <!-- ===================== 真实窗口框架（圆角复现） =====================
          严格按宿主 ui-layout 的结构与真实哈希类名搭：
@@ -453,13 +554,19 @@
         for (const [name, value] of Object.entries(tokens)) {
           document.body.style.setProperty(name, value[mode])
         }
-        // 3. 结构层样式表 + 状态属性（插件 controller.mount() 的真实行为）
-        document.documentElement.setAttribute('data-dshb-enabled', 'on')
-        document.documentElement.setAttribute('data-dshb-ambient', 'on')
-        document.documentElement.setAttribute('data-dshb-motion', 'on')
-        document.documentElement.setAttribute('data-dshb-typography', 'on')
-        document.documentElement.setAttribute('data-dshb-preset', params.get('preset') || 'aurora')
-        document.documentElement.setAttribute('data-dshb-radius', 'standard')
+        // 3. 结构层样式表 + 状态属性（插件 controller.mount() 的真实行为）。
+        //    属性清单从 controller.js 推导后由 prepare.mjs 写进 DSHB_ATTRS ——
+        //    手抄一份的代价是「新增开关时验证台静默少投射一个属性」。
+        const attrs = window.DSHB_ATTRS || { flags: [], selectors: {} }
+        for (const name of attrs.flags) {
+          document.documentElement.setAttribute(name, 'on')
+        }
+        for (const [key, name] of Object.entries(attrs.selectors)) {
+          document.documentElement.setAttribute(
+            name,
+            key === 'preset' ? params.get('preset') || 'aurora' : 'standard'
+          )
+        }
         for (const { name, css } of window.DSHB_STYLES || []) {
           // 回归夹具：`?bug=caption-overlap` 时抽掉安全修正层，
           // 还原成「灯箱关闭按钮落进原生按钮占位」的原始状态。
@@ -496,6 +603,9 @@
       if (view === 'panel') {
         document.querySelector('.app').style.display = 'none'
         document.getElementById('panel-stage').hidden = false
+        // 版本徽标的内容也来自构建产物，与面板里显示的是同一个值
+        const versionTag = document.getElementById('panel-version')
+        if (versionTag) versionTag.textContent = 'v' + (window.DSHB_VERSION || '?')
       }
       if (view === 'frame') {
         document.querySelector('.app').style.display = 'none'
@@ -519,6 +629,29 @@
         document.documentElement.style.setProperty('--dsh-windows-titlebar-height', '40px')
         document.getElementById('caption').textContent =
           '图片灯箱 × 原生标题栏覆盖层 · ' + (mode === 'dark' ? '深色' : '浅色')
+      }
+      if (view === 'panels') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('panels-stage').hidden = false
+        document.getElementById('caption').textContent =
+          '任务面板 × 代码块 · 宿主编译样式 · ' + (mode === 'dark' ? '深色' : '浅色')
+      }
+
+      /*
+       * 回归夹具：`?bug=pre-border` 把「给所有 pre 加边框/圆角」这条已删除的规则
+       * 重新套上，用来取证宿主代码卡片里被套出的第二层框。
+       * 与其它夹具同理 —— 同源、同轮渲染，取景与光照条件完全一致。
+       */
+      if (params.get('bug') === 'pre-border') {
+        const tag = document.createElement('style')
+        tag.dataset.pluginCss = 'dsh-ui-beautify/REGRESSION-FIXTURE-pre'
+        tag.textContent = `
+          html body pre {
+            border: 1px solid var(--dsw-alias-border-l2);
+            border-radius: var(--dsw-radius-md);
+            box-shadow: inset 0 1px 0 0 var(--dsw-alias-border-l1);
+          }`
+        document.head.appendChild(tag)
       }
 
       /** 渲染三档圆角并排的画廊。每列的令牌只作用在自己的子树上。 */

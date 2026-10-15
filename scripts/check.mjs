@@ -311,6 +311,68 @@ if (safetyRules.length > 0) {
   ok(`安全修正层：${safetyRules.length} 条规则，均限定 Windows 标题栏模式且引用宿主变量`)
 }
 
+// ------------------------------------ 4.8 任务列表增强层的选择器纪律
+
+/**
+ * 任务列表增强靠宿主的两个**有意暴露**的钩子定位：面板根的
+ * `data-testid="todo-panel"` 与任务项的 `data-status`。两者都写死在宿主的 JSX 里
+ * （`data-testid` 更是全应用唯一一处），因此跨构建稳定。
+ *
+ * 但宿主同时发布了 `aSus8q_item` 这类编译哈希类名 —— 它们能选中同样的元素，
+ * 却会在宿主下次构建时静默失效。这条断言把「误用哈希类名」变成构建期失败。
+ */
+const taskListRules = leafBlocks(stripCssComments(css['task-list.css'] ?? ''))
+if (taskListRules.length === 0) {
+  bad('task-list.css 里没有任何规则 —— 任务列表增强层要么有内容，要么不该存在')
+}
+const HASHED_CLASS = /\.[a-z0-9]{5,6}_[A-Za-z]/i
+for (const block of taskListRules) {
+  if (!block.selector.includes('data-dshb-tasklist')) {
+    bad(`任务列表规则没有限定在 data-dshb-tasklist 下：${block.selector}`)
+  }
+  // ::before 规则的选择器里天然不会重复面板锚点，由主体规则背书
+  const anchored =
+    block.selector.includes('data-testid') || block.selector.includes('::before')
+  if (!anchored) {
+    bad(`任务列表规则没有锚定 data-testid="todo-panel"：${block.selector}`)
+  }
+  if (HASHED_CLASS.test(block.selector)) {
+    bad(`任务列表规则用了编译哈希类名，宿主再次构建即失效：${block.selector}`)
+  }
+}
+if (taskListRules.length > 0) {
+  ok(
+    `任务列表增强层：${taskListRules.length} 条规则，全部锚定 data-testid/data-status，无哈希类名`
+  )
+}
+
+// ------------------------------------ 4.9 不要再给 <pre> 加边框
+
+/**
+ * 这条断言来自一个真实缺陷：第一版给所有 `pre` 加了边框 + 圆角 + 内高光，
+ * 理由是「大面积实色显得扁平」。但宿主的代码块把圆角与底色放在 `pre` 自己身上
+ * （`.block :where(pre) { border-bottom-*-radius: var(--dsw-radius-lg) }`），
+ * 那条规则于是在代码卡片内部套出了第二层细圆角边框。
+ *
+ * 官方基线是单层干净卡片。要动代码块外观，请改令牌
+ * （`--dsw-alias-markdown-code-block` 等），不要在样式表里加框。
+ */
+const prePaintRules = Object.entries(css).flatMap(([file, text]) =>
+  leafBlocks(stripCssComments(text))
+    .filter((block) => /(^|[\s,>])pre\b/.test(block.selector))
+    .filter((block) =>
+      /(^|;|\s)border(-[a-z]+)?\s*:|box-shadow\s*:/.test(block.body)
+    )
+    .map((block) => `${file} → ${block.selector}`)
+)
+if (prePaintRules.length > 0) {
+  bad(
+    `以下规则给 <pre> 加了边框或外框阴影，会在宿主代码卡片里套出第二层框：\n      ${prePaintRules.join('\n      ')}`
+  )
+} else {
+  ok('代码块约束：没有任何规则给 <pre> 加边框或外框阴影')
+}
+
 // ----------------------------------------------------------- 5. 面板类名闭环
 
 const classesDefined = new Set(

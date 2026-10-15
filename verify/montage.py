@@ -261,4 +261,30 @@ else:
         OUT / "compare-caption-safety.png",
     )
 
+# 任务面板 × 代码块：官方基线 / 插件效果 / 已删除规则的复现。
+# 这里刻意**不缩到 PANEL_WIDTH**：任务列表的差异在文字上（删除线、字重、
+# 状态点），缩到 880 宽就看不清了。改为统一缩到 1400 宽后纵向排列。
+def scaled(path: Path, width: int) -> Image.Image:
+    image = load(path)
+    if image.width == width:
+        return image
+    height = round(image.height * width / image.width)
+    return image.resize((width, height), Image.LANCZOS)
+
+
+panels_sources = [
+    ("panels-official-light.png", "官方基线：三态只靠 6px 状态点区分；列表末行被硬切且无滚动提示"),
+    ("panels-aurora-light.png", "插件：已完成降权划线 · 进行中高亮 · 底部渐隐；代码块恢复单层卡片"),
+    ("panels-pre-border-aurora-light.png", "已删除规则的复现：给 <pre> 加边框，代码卡片里套出第二层细框"),
+]
+missing = [name for name, _ in panels_sources if not (OUT / name).exists()]
+if missing:
+    print(f"  跳过任务面板对照图，缺少：{missing}")
+else:
+    strip(
+        "任务面板 × Markdown 代码块 —— 宿主编译样式下的对照",
+        [(scaled(OUT / name, 1400), label) for name, label in panels_sources],
+        OUT / "compare-panels.png",
+    )
+
 print(f"\n对比图已写入 {OUT}")

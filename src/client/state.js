@@ -22,10 +22,18 @@ export const DEFAULT_STATE = Object.freeze({
   ambient: true,
   motion: true,
   typography: true,
+  taskList: true,
   glass: true
 })
 
-const BOOLEAN_KEYS = ['enabled', 'ambient', 'motion', 'typography', 'glass']
+const BOOLEAN_KEYS = [
+  'enabled',
+  'ambient',
+  'motion',
+  'typography',
+  'taskList',
+  'glass'
+]
 const STRING_KEYS = ['preset', 'accent', 'radius']
 
 /**

@@ -678,6 +678,37 @@ body[data-ds-dark-theme] .rg-lightbox-art {
   background: linear-gradient(135deg, #2a3a5c, #1b2230 45%, #111721);
 }
 
+/* --------------------------------------------- 任务面板 × 代码块视图 */
+
+#panels-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 28px;
+  padding: 22px;
+  align-items: start;
+  min-height: 100vh;
+  background: var(--dsw-alias-bg-base);
+}
+
+.pn-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pn-label {
+  font-size: 11px;
+  font-family: var(--ds-font-family-code);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.pn-text {
+  margin: 0;
+  font: var(--dsw-font-markdown-base);
+  color: var(--dsw-alias-label-primary);
+}
+
 /* 弹窗遮罩在验证台里去掉，避免它盖住要对比的界面 —— 只保留卡片本身，
    仍按宿主的固定定位规则浮在右下角。 */
 .modal-anchor .cModal-root {

@@ -41,12 +41,23 @@ html body :not(pre) > code {
   padding: 0.1em 0.34em;
 }
 
-/* 代码块：圆角 + 描边 + 顶部一道极淡高光，避免大面积实色显得扁平 */
-html body pre {
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  box-shadow: inset 0 1px 0 0 var(--dsw-alias-border-l1);
-}
+/* 代码块：**刻意不动 `<pre>`**。
+ *
+ * 第一版给所有 `pre` 加了边框 + 圆角 + 顶部内高光，理由是「大面积实色显得扁平」。
+ * 那是个错误：宿主的代码块把视觉身份放在 `pre` 自己身上 ——
+ *
+ *   .block { border-radius: var(--dsw-radius-lg); background: … }        ← 卡片
+ *   .block :where(pre) { padding: 16px; background: …;
+ *                        border-bottom-*-radius: var(--dsw-radius-lg) }   ← pre 自带圆角
+ *
+ * 于是我的规则会在卡片内部套出第二层细圆角边框。官方基线是**单层干净卡片**，
+ * 而带这条规则的版本能在验证台里肉眼看出那个内框
+ * （见 verify/out/panels-official-light.png 与 panels-pre-border-aurora-light.png
+ * 的对照，夹具 `?bug=pre-border` 就是这条被删掉的规则）。
+ *
+ * 代码块与正文的区分已经由令牌层完成：`--dsw-alias-markdown-code-block` 与
+ * `-banner` 都随预设调整过。样式表再叠一层，收益是零，代价是打一架。
+ */
 
 /* ------------------------------------------------------------------ *
  * 3. 引用与分隔

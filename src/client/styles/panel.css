@@ -214,8 +214,12 @@ body[data-ds-dark-theme] .dshb-swatch {
 }
 
 .dshb-swatch-active {
+  /* 中间那圈「空隙」必须用面板**实际所在的表面色**，不能用画布色：
+     面板坐在设置卡片上（--dsw-alias-settings-card-fill = bg-layer-2），
+     而画布色是 bg-base —— 深色下两者相差明显（#0c1017 vs #1b2230），
+     用画布色会在选中色板周围留下一圈发暗的光晕。 */
   box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset,
-    0 0 0 3px var(--dsw-alias-bg-base),
+    0 0 0 3px var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-base)),
     0 0 0 5px var(--dsw-alias-state-business-primary);
 }
 
@@ -309,6 +313,27 @@ body[data-ds-dark-theme] .dshb-swatch {
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
+}
+
+.dshb-foot-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 版本号：插件走热替换，没有可见版本号就只能靠猜「我到底装上了没有」 */
+.dshb-version {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  corner-shape: round;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  background-color: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
 }
 
 .dshb-reset {

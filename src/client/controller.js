@@ -36,7 +36,8 @@ const FLAGS = {
   enabled: 'data-dshb-enabled',
   ambient: 'data-dshb-ambient',
   motion: 'data-dshb-motion',
-  typography: 'data-dshb-typography'
+  typography: 'data-dshb-typography',
+  taskList: 'data-dshb-tasklist'
 }
 
 /**

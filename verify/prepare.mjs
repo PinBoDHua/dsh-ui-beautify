@@ -38,10 +38,36 @@ const THEME_ORDER = [
   'layout-frame.css',
   // 图片灯箱的**编译后**样式（类名形如 _close_1hos8_29）。安全修正层那条规则
   // 针对的正是这套命名约定，因此这一张不能用源码级类名替代。
-  'image-lightbox.css'
+  'image-lightbox.css',
+  // TodoPanel 与 StateDot 的编译样式。任务面板增强要同时改「行」与「状态点」，
+  // 而这两者分属两个包、两套哈希类名，验证台必须照编译结果渲染才作数。
+  'todo-panel.css',
+  'state-dot.css'
 ]
 
 mkdirSync(BUILD, { recursive: true })
+
+/**
+ * 从控制器源码里读出它会在 `<html>` 上投射哪些属性。
+ *
+ * 验证台必须复现「宿主 apply() 之后页面处于什么状态」，而这件事的真相来源是
+ * `src/client/controller.js` 的 FLAGS / SELECTORS 两个对象。之前验证台手抄了一份
+ * 属性清单，结果 v1.1 新增 `data-dshb-tasklist` 时漏抄 —— 任务列表增强在验证台里
+ * 完全不生效，而截图看起来「和官方一样」，差点被当成功能没做出来。
+ *
+ * 抄一份清单就是多一个必然漂移的地方；直接从源码推导，加了什么就投射什么。
+ */
+function readControllerAttributes() {
+  const source = readFileSync(join(ROOT, 'src', 'client', 'controller.js'), 'utf8')
+  const readObject = (name) => {
+    const body = source.match(new RegExp(`const ${name} = \\{([^}]*)\\}`))?.[1]
+    if (body === undefined) throw new Error(`controller.js 里找不到 ${name} 对象`)
+    return Object.fromEntries(
+      [...body.matchAll(/(\w+)\s*:\s*'([^']+)'/g)].map((m) => [m[1], m[2]])
+    )
+  }
+  return { flags: Object.values(readObject('FLAGS')), selectors: readObject('SELECTORS') }
+}
 
 // ------------------------------------------------------------ 令牌样式表
 
@@ -112,11 +138,16 @@ for (const state of STATES) {
 
 writeFileSync(
   join(BUILD, 'tokens.js'),
-  `// 由 verify/prepare.mjs 生成：插件 buildTokens() 的真实输出快照。\nwindow.DSHB_STATES = ${JSON.stringify(
-    STATES
-  )}\nwindow.DSHB_TOKENS = ${JSON.stringify(snapshot)}\nwindow.DSHB_RADIUS_TIERS = ${JSON.stringify(
-    presets.RADIUS_SCALES
-  )}\n`
+  `// 由 verify/prepare.mjs 生成：插件 buildTokens() 的真实输出快照，
+// 以及控制器在 <html> 上投射的属性清单（从 controller.js 源码推导）。
+window.DSHB_STATES = ${JSON.stringify(STATES)}
+window.DSHB_TOKENS = ${JSON.stringify(snapshot)}
+window.DSHB_RADIUS_TIERS = ${JSON.stringify(presets.RADIUS_SCALES)}
+window.DSHB_ATTRS = ${JSON.stringify(readControllerAttributes())}
+window.DSHB_VERSION = ${JSON.stringify(
+    JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+  )}
+`
 )
 
 // ------------------------------------------------------- 插件自身的样式表

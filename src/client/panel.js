@@ -10,6 +10,7 @@
  */
 
 import { ACCENTS, PRESETS, RADIUS_SCALES } from './presets.js'
+import { VERSION } from './version.generated.js'
 
 const h = React.createElement
 
@@ -223,6 +224,16 @@ export function BeautifyPanel(props) {
 
       h(
         Row,
+        { title: t('taskList'), hint: t('taskListHint') },
+        h(Switch, {
+          checked: state.taskList,
+          disabled,
+          onChange: (value) => update({ taskList: value })
+        })
+      ),
+
+      h(
+        Row,
         { title: t('glass'), hint: t('glassHint') },
         h(Switch, {
           checked: state.glass,
@@ -245,7 +256,12 @@ export function BeautifyPanel(props) {
     h(
       'footer',
       { className: 'dshb-foot' },
-      h('span', null, t('footer')),
+      h(
+        'span',
+        { className: 'dshb-foot-note' },
+        t('footer'),
+        h('span', { className: 'dshb-version' }, `v${VERSION}`)
+      ),
       h(
         'button',
         {

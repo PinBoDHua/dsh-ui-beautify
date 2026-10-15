@@ -1,0 +1,111 @@
+/*
+ * 界面美化 · Lumina —— 任务列表面板增强（可用 data-dshb-tasklist 整体关闭）。
+ *
+ * ## 要解决的问题
+ * 宿主的 TodoPanel 三态在视觉上几乎不可分：任务项文字**恒为同一种**
+ * `--dsw-alias-label-secondary`，状态只由一个 6px 的状态点承担 —— 已完成是绿点、
+ * 进行中是转圈、待处理是灰点。十几行排下来，扫一眼得到的印象是「都差不多」，
+ * 于是「做完了没有」这个问题在面板上读不出来。
+ *
+ * 另外列表 `max-height: 180px` 配 `overflow-y: auto`，行高 28px 不是整数倍，
+ * 最后一行常常被硬切成两半，且没有任何「还能滚」的提示 —— 看起来像渲染坏了。
+ *
+ * ## 做了什么
+ * 1. 把状态差从「6px 圆点」放大到「整行可辨」：
+ *    已完成 → 文字降权 + 删除线；进行中 → 强调色淡染行底 + 左侧强调条 + 文字加重；
+ *    待处理 → 保持宿主原样（它是基线，不需要被强调）。
+ * 2. 列表底部加渐隐，并在末尾留出与渐隐等高的空白 —— 滚到底时渐隐落在空白上，
+ *    最后一行不会被误伤；未滚到底时渐隐正好压住被切开的半行，把「硬切」
+ *    变成「下面还有」的提示。
+ * 3. 表头是 `<button>`，宿主没给 hover 反馈；补上，并保持图标横向位置不变。
+ *
+ * ## 选择器约定
+ * 只用宿主**有意暴露**的钩子：面板根的 `data-testid="todo-panel"`、
+ * 任务项的 `data-status="completed|in_progress|pending"`（封闭联合，来自
+ * ui-conversation 的 TodoItem 类型）、以及 `aria-expanded`。
+ * 全程不碰 `.aSus8q_item` 这类编译哈希类名 —— 宿主改一次构建就会失效。
+ *
+ * 内容节点用 `> span:last-child` 定位：任务项固定只有两个子元素
+ * （状态点 span + 内容 span），这个结构由 JSX 决定，比类名稳定。
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. 状态阶梯
+ * ------------------------------------------------------------------ */
+
+/* 已完成：降权 + 删除线。删除线用描边色而不是文字色，
+   让「划掉」这件事读得出来、又不至于抢走正文的注意力。 */
+html[data-dshb-tasklist='on']
+  body
+  [data-testid='todo-panel']
+  li[data-status='completed']
+  > span:last-child {
+  color: var(--dsw-alias-label-caption);
+  text-decoration: line-through;
+  text-decoration-color: var(--dsw-alias-border-l4);
+  text-decoration-thickness: 1px;
+}
+
+/* 进行中：这一行是「现在正在做的事」，给它最强的视觉权重。
+   左右各 6px 的负外边距与内边距配成一对，行被撑宽了 12px 又收回 12px，
+   状态点与文字的横向位置与其他行严格对齐。 */
+html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] li[data-status='in_progress'] {
+  position: relative;
+  margin-inline: -6px;
+  padding-inline: 6px;
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+/* 左侧强调条。绝对定位的包含块是行的内边距盒，inset-inline-start: 0
+   因此落在行的左边缘，而不是文字起点。 */
+html[data-dshb-tasklist='on']
+  body
+  [data-testid='todo-panel']
+  li[data-status='in_progress']::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+/* 待处理刻意不做任何样式：三档里只有它保持宿主原样，
+   另外两档的差异才有参照物。 */
+
+/* ------------------------------------------------------------------ *
+ * 2. 列表溢出：底部渐隐
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] ul {
+  padding-block-end: 12px;
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. 表头：它是个按钮，宿主没给可点的反馈
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button {
+  margin-inline: -6px;
+  padding-inline: 6px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+html[data-dshb-tasklist='on'] body [data-testid='todo-panel'] button:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid
+    var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}

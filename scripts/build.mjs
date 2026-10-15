@@ -41,9 +41,31 @@ const STYLE_ORDER = [
   'base.css',
   'elevation.css',
   'typography.css',
+  'task-list.css',
   'safety.css',
   'panel.css'
 ]
+
+/**
+ * 生成 `src/client/version.generated.js`。
+ *
+ * 版本号的事实来源是 package.json；面板要把它显示出来，让用户能一眼确认
+ * 「我装的到底是哪一版」—— 插件是热替换的，没有这一步就只能靠猜。
+ * 与样式表清单同理：能从一个真相来源推导的，就不要手抄第二份。
+ */
+function generateVersion() {
+  const { version } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  writeFileSync(
+    join(SRC, 'version.generated.js'),
+    `/**
+ * 本文件由 scripts/build.mjs 生成，请勿手工编辑。
+ * 版本号的事实来源是 package.json。
+ */
+export const VERSION = ${JSON.stringify(version)}
+`
+  )
+  return version
+}
 
 /** factory 里允许出现的 require id。越界即构建失败。 */
 const ALLOWED_REQUIRES = new Set([
@@ -247,6 +269,7 @@ function verify(code) {
 
 // -------------------------------------------------------------------- 主流程
 
+const version = generateVersion()
 const styleCount = generateStyles()
 const modules = orderModules(ENTRY)
 collectDeclarations(modules)
@@ -263,6 +286,7 @@ mkdirSync(dirname(OUT), { recursive: true })
 writeFileSync(OUT, code)
 
 console.log(`插件 id      : ${PLUGIN_ID}`)
+console.log(`版本         : ${version}`)
 console.log(`样式表       : ${styleCount} 张`)
 console.log(`模块         : ${modules.length} 个`)
 // 按 UTF-8 字节数报告：产物里中文注释占比不低，字符数会明显小于磁盘占用。

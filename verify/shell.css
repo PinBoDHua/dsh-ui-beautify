@@ -10,6 +10,21 @@
  * 见 build/components.css。
  */
 
+/*
+ * `hidden` 必须真的隐藏。
+ *
+ * 浏览器的 [hidden] 只来自 UA 样式表（`display: none`），**任何**作者规则里的
+ * `display` 都会盖掉它 —— 而本文件给每个 stage 都写了 `display: grid/flex`。
+ * 结果是：切换 view 时新 stage 显示、旧 stage 也还显示，两张视图在截图里叠在一起。
+ *
+ * 这个 bug 是加语法画廊时暴露的：`?view=syntax` 的截图里出现了 TodoPanel。
+ * 之前几个视图一直「看起来正常」，只是因为后显示的 stage 恰好被裁在取景框外。
+ * 用 !important 是刻意的：这里是测试台的外壳，`[hidden]` 的语义必须无条件成立。
+ */
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -556,6 +571,54 @@ html[data-dshb-ambient='on'] .sidebar {
   corner-shape: round;
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l2);
+}
+
+/* ---------------------------------------------------------- 语法着色画廊
+   四列并排：每列是一个预设，列根挂着该预设的整套令牌。 */
+#syntax-stage {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  padding: 18px;
+  align-items: start;
+}
+
+.sx-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 14px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.sx-head {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sx-sub {
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+/* 代码块：底色与圆角都取自该列的令牌，与宿主 CodeBlock 的做法一致 ——
+   视觉身份画在 pre 自己身上，因此这里不再叠一层框。 */
+.sx-code {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-markdown-code-block);
+  font-family: var(--ds-font-family-code);
+  font-size: 11.5px;
+  line-height: 18px;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .rg-head {

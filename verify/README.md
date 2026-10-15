@@ -80,15 +80,16 @@ python verify/montage.py  # 拼成对比图
 | --- | --- |
 | `shell`（默认） | 应用外壳：侧栏 + 转录 + composer |
 | `overlay` | 浮层：菜单材质、卡片高度、提示气泡、对话框 |
-| `panel` | 插件自己的设置面板 |
+| `panel` | 插件自己的设置面板（含 v1.2 的**可读性读数**） |
 | `frame` | 真实窗口框架（Windows 标题栏模式 + 中心列圆角） |
 | `radius` | 圆角画廊：三档并排，含不应变化的胶囊对照组 |
 | `lightbox` | 图片灯箱 × 模拟的原生标题栏覆盖层 |
 | `panels` | 任务面板（宿主编译样式）× Markdown 代码块 |
+| `syntax` | 语法着色画廊：四个预设并排，同一段代码 × 真实 token 色 |
 
 ---
 
-## 两条「不要手抄清单」的教训
+## 两条「不要手抄清单」的教训，和一条「别信作者样式」的教训
 
 验证台里有几处必须与插件保持一致，它们**全部从真相来源推导**，不手抄：
 
@@ -97,10 +98,28 @@ python verify/montage.py  # 拼成对比图
 | 要渲染哪几张插件样式表 | 构建产物 `src/client/styles.generated.js` |
 | `<html>` 上要投射哪些属性 | `src/client/controller.js` 的 FLAGS / SELECTORS |
 | 版本徽标显示什么 | `package.json` 的 `version` |
+| **可读性读数与语法画廊的取值** | `src/client/readability.js` 与 `presets.js` |
 
-这三处都真的踩过：样式表清单漏加 `safety.css`、属性清单漏加 `data-dshb-tasklist`
+前三处都真的踩过：样式表清单漏加 `safety.css`、属性清单漏加 `data-dshb-tasklist`
 （任务列表增强因此在验证台里完全不生效，而截图看起来「和官方一样」，
 差点被当成功能没做出来）。**抄一份清单就是多一个必然漂移的地方。**
+
+可读性读数与语法画廊沿用同一条原则：数值与 token 取值都在 `prepare.mjs` 里
+用**真实模块**算好再写进 `build/tokens.js`，页面只负责显示。
+如果在这一页里另写一遍对比度公式，验证台就会用它自己的算法证明自己达标。
+
+### 别信作者样式：`[hidden]` 会被 `display` 盖掉
+
+`?view=syntax` 的第一次截图里出现了 TodoPanel —— 而那一页根本没有渲染它。
+
+原因是浏览器对 `[hidden]` 的 `display: none` 来自 **UA 样式表**，任何作者规则里的
+`display` 都能盖掉它；而 `shell.css` 给每个 stage 都写了 `display: grid/flex`。
+于是切视图时新 stage 显示、旧 stage 也还显示，两张视图在一张截图里叠着。
+之前几个视图「看起来正常」，只是因为后显示的 stage 恰好落在取景框外。
+
+修法是 shell.css 顶部一条 `[hidden] { display: none !important }`，
+理由写在那一行旁边。**教训**：测试台自己的布局代码也会骗人，
+而且骗得比被测代码更隐蔽 —— 它不会报错，只会让对照图失去意义。
 
 ---
 

@@ -287,4 +287,20 @@ else:
         OUT / "compare-panels.png",
     )
 
+# 语法着色：同一段代码在四个预设的代码底上。用来证明 v1.2 的语法色接管
+# 确实随预设走，且每个 token 都能读出来（深浅两套各一张）。
+syntax_sources = [
+    ("syntax-aurora-light.png", "浅色：极光 / 午夜 / 石墨 / 纸感 —— 代码底 #f3f6fb / #f1f4f9 / #f4f4f6 / #f6f2e9"),
+    ("syntax-aurora-dark.png", "深色：同一段代码，九个 token 在四个深色底上均 ≥4.5:1"),
+]
+missing = [name for name, _ in syntax_sources if not (OUT / name).exists()]
+if missing:
+    print(f"  跳过语法着色对照图，缺少：{missing}")
+else:
+    strip(
+        "语法着色画廊 —— 同一段代码 × 四个预设的真实 token 色（v1.2 新增）",
+        [(scaled(OUT / name, 1500), label) for name, label in syntax_sources],
+        OUT / "compare-syntax.png",
+    )
+
 print(f"\n对比图已写入 {OUT}")

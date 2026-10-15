@@ -9,7 +9,14 @@
  * react / react-dom / jsx-runtime 与 @deepseek-ai/* 这些 id 可 require）。
  */
 
-import { ACCENTS, PRESETS, RADIUS_SCALES } from './presets.js'
+import {
+  ACCENTS,
+  PRESETS,
+  RADIUS_SCALES,
+  accentSwatches,
+  buildTokens
+} from './presets.js'
+import { evaluateBoth } from './readability.js'
 import { VERSION } from './version.generated.js'
 
 const h = React.createElement
@@ -26,6 +33,54 @@ function Row(props) {
       props.hint ? h('div', { className: 'dshb-row-hint' }, props.hint) : null
     ),
     h('div', { className: 'dshb-row-control' }, props.children)
+  )
+}
+
+/**
+ * 可读性读数。
+ *
+ * 这是 v1.2 新增的一行：它把「这套配色读不读得出来」从一句承诺变成面板上的数字。
+ *
+ * 为什么值得放一行：插件改了 110 多个宿主令牌，用户无法逐个核对；而对比度不足
+ * 恰恰是最不容易被察觉的那类问题 —— 界面上没有任何东西会报错，只是字发虚。
+ * 把最低的那个比值摆出来，用户至少知道「现在这套是达标的」。
+ *
+ * 读数覆盖**明暗两套**：插件在暗色下也生效，只报当前明暗会漏掉一半。
+ *
+ * @param props.state - 当前外观状态（用于算出令牌层）。
+ * @param props.t - 本地化函数。
+ */
+function Readability(props) {
+  const report = evaluateBoth(buildTokens(props.state))
+  const failing = report.failures.length
+  // 用**正文级**最劣项：装饰性底板（键帽 1.3、滑块 3）与说明文字档（底线 3）
+  // 本来就允许更低，拿它们当读数会显示成 1.8:1 / 3.5:1，看起来像出了问题。
+  const worst = report.worstBody ?? report.worst
+  const ratio = worst === null ? 0 : worst.ratio
+  // 面板上只给一个数字，细节放 title —— 用户想追查时能看到是哪一对不达标。
+  const detail = [
+    `${props.t('readabilityWorst')}: ${ratio.toFixed(2)}:1（${worst === null ? '-' : worst.label}）`,
+    `${props.t('readabilityChecks')}: ${report.total}`,
+    failing > 0
+      ? `${props.t('readabilityFailing')}: ${failing}`
+      : props.t('readabilityPass')
+  ].join(' · ')
+  return h(
+    Row,
+    { title: props.t('readability'), hint: props.t('readabilityHint') },
+    h(
+      'span',
+      {
+        className: failing > 0 ? 'dshb-metric dshb-metric-bad' : 'dshb-metric',
+        title: detail
+      },
+      h('span', { className: 'dshb-metric-value' }, `${ratio.toFixed(1)}:1`),
+      h(
+        'span',
+        { className: 'dshb-metric-tag' },
+        failing > 0 ? props.t('readabilityFailing') : props.t('readabilityPass')
+      )
+    )
   )
 }
 
@@ -115,6 +170,8 @@ export function BeautifyPanel(props) {
 
   const disabled = !state.enabled
   const update = (patch) => controller.setState(patch)
+  // 求解依赖当前预设，因此换预设时色板跟着更新；求解结果有缓存，代价可忽略。
+  const swatches = accentSwatches(state.preset)
 
   return h(
     'div',
@@ -167,6 +224,8 @@ export function BeautifyPanel(props) {
         h(
           'div',
           { className: 'dshb-swatches', role: 'radiogroup', 'aria-label': t('accent') },
+          // 色板画的是**求解后**的值，不是配色表里的原始值 —— 见 accentSwatches 的说明。
+          // 求解依赖预设（要对预设的表面色达标），因此换预设时色板也会跟着微调。
           ACCENTS.map((accent) =>
             h('button', {
               key: accent.id,
@@ -181,8 +240,8 @@ export function BeautifyPanel(props) {
                   ? 'dshb-swatch dshb-swatch-active'
                   : 'dshb-swatch',
               style: {
-                '--dshb-swatch-light': accent.light,
-                '--dshb-swatch-dark': accent.dark
+                '--dshb-swatch-light': swatches[accent.id].light,
+                '--dshb-swatch-dark': swatches[accent.id].dark
               },
               onClick: () => update({ accent: accent.id })
             })
@@ -201,6 +260,8 @@ export function BeautifyPanel(props) {
           onChange: (id) => update({ radius: id })
         })
       ),
+
+      h(Readability, { state, t }),
 
       h(
         Row,

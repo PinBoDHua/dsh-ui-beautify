@@ -99,6 +99,14 @@ const SHOTS = [
     modes: ['light', 'dark']
   },
   {
+    // 语法着色画廊（v1.2）：四个预设并排，同一段代码、同一套 token 类别。
+    // 用来证明「宿主的九个语法色在插件换过代码底之后仍然读得出来」。
+    view: 'syntax',
+    size: [1240, 420],
+    states: ['aurora'],
+    modes: ['light', 'dark']
+  },
+  {
     // 取证夹具：把「给所有 pre 加边框」这条已删除的规则重新套上。
     view: 'panels',
     bug: 'pre-border',

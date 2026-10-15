@@ -32,6 +32,28 @@ const { STYLES } = await import(
 const STYLE_COUNT = STYLES.length
 
 /**
+ * 可读性契约与颜色数学。
+ *
+ * 测试直接引用源码模块（而不是 bundle），因为要断言的是**求解与评估**这两件
+ * 纯计算的行为；bundle 只负责把它们送进宿主。下面另有一条测试把这套契约
+ * 跑在「控制器真正投射出去的那一层」上，覆盖集成路径。
+ */
+const { evaluate, evaluateBoth, TEXT_TIERS } = await import(
+  new URL('../src/client/readability.js', import.meta.url).href
+)
+const { ACCENTS, PRESETS, buildTokens } = await import(
+  new URL('../src/client/presets.js', import.meta.url).href
+)
+const {
+  contrast,
+  ensureContrast,
+  solveColor,
+  solveTone,
+  tint,
+  toHsl
+} = await import(new URL('../src/client/color.js', import.meta.url).href)
+
+/**
  * 控制器会在 `<html>` 上投射多少个属性。
  *
  * 同样不写死：新增一个开关（例如 data-dshb-tasklist）就多一个，
@@ -238,7 +260,9 @@ test('apply 向宿主推送令牌层，值都是 { light, dark } 对且品牌位
   const names = Object.keys(layer.tokens)
   assert.ok(names.length > 50, `令牌层条目过少（${names.length}），预设表可能没铺全`)
   for (const [name, value] of Object.entries(layer.tokens)) {
-    assert.match(name, /^--(dsw|dshb|ds)-/, `异常令牌名 ${name}`)
+    // 允许的命名空间：宿主别名/静态令牌（dsw）、插件自有原语（dshb）、
+    // 宿主排版量（ds）、以及代码着色（shiki）。
+    assert.match(name, /^--(dsw|dshb|ds|shiki)-/, `异常令牌名 ${name}`)
     assert.equal(typeof value.light, 'string', `${name} 缺少 light`)
     assert.equal(typeof value.dark, 'string', `${name} 缺少 dark`)
   }
@@ -516,4 +540,345 @@ test('插件卸载后不残留任何全局副作用', () => {
 
   assert.equal(head.children.length, 0, '卸载后样式标签必须全部移除')
   assert.equal(attributes.size, 0, '卸载后不应残留 data-dshb-* 属性')
+})
+
+// ------------------------------------------------- v1.2 求解器与可读性契约
+
+test('颜色求解器：已达标原样返回，不达标才移动明度', () => {
+  // 「不达标才动」是求解器的核心承诺：达标的颜色不该被无谓改写，
+  // 否则每次改预设都会连带改动一大批本来就合格的取值。
+  assert.equal(ensureContrast('#000000', '#ffffff', 4.5), '#000000')
+  assert.equal(ensureContrast('#3f6fe0', '#ffffff', 4.0), '#3f6fe0')
+
+  // 不达标时必须真的被调整，并且达标 —— 不是「差一点」的近似值
+  const raised = ensureContrast('#0d8f85', '#ffffff', 4.5)
+  assert.notEqual(raised, '#0d8f85')
+  assert.ok(
+    contrast(raised, '#ffffff') >= 4.5,
+    `求解后仍不达标：${raised} → ${contrast(raised, '#ffffff').toFixed(2)}`
+  )
+
+  // 色相必须保持：用户选的是碧波青，求解后还得是碧波青
+  const delta = Math.abs(toHsl('#0d8f85').h - toHsl(raised).h)
+  assert.ok(Math.min(delta, 360 - delta) <= 1, '求解不应改变色相')
+})
+
+test('颜色求解器：方向冲突时返回 null，而不是一个不达标的颜色', () => {
+  // 同时要求「压住纯白」与「压住纯黑」是矛盾的：任何颜色都不可能对两端都达到 4.5。
+  // 这种时候返回 null，让调用方（与构建期断言）去处理，比悄悄给个差一点的值安全。
+  assert.equal(
+    solveColor('#808080', [
+      { against: '#ffffff', target: 4.5 },
+      { against: '#000000', target: 4.5 }
+    ]),
+    null
+  )
+  // 同向的多约束应当有解
+  const solved = solveColor('#808080', [
+    { against: '#ffffff', target: 4.5 },
+    { against: '#f6f8fc', target: 4.5 }
+  ])
+  assert.ok(solved !== null && contrast(solved, '#ffffff') >= 4.5)
+})
+
+test('输入框占位文字是正文而不是描边（v1.2 复核补上的缺口）', () => {
+  // 宿主唯一的消费者是 `.input::placeholder { color: var(--dsw-alias-label-dimmed) }`，
+  // 字号 14px。v1.1 把这个令牌绑在描边色上，实测只有 1.48–2.00:1 —— 每种组合里
+  // 占位文字都近乎看不见，而当时的契约完全没有覆盖它（41 条配对里没有这一条）。
+  for (const preset of PRESETS) {
+    for (const accent of ACCENTS) {
+      const tokens = buildTokens({
+        enabled: true,
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        ambient: true,
+        motion: true,
+        typography: true,
+        glass: true
+      })
+      for (const mode of ['light', 'dark']) {
+        const ratio = contrast(
+          tokens['--dsw-alias-label-dimmed'][mode],
+          tokens['--dsw-specific-input-major'][mode]
+        )
+        assert.ok(
+          ratio >= 4.5,
+          `${preset.id}/${accent.id}/${mode} 占位文字只有 ${ratio.toFixed(2)}`
+        )
+      }
+      // 它不该再与描边同值 —— 那正是缺陷的形态
+      for (const mode of ['light', 'dark']) {
+        for (const border of ['--dsw-alias-border-l3', '--dsw-alias-border-l4']) {
+          assert.notEqual(
+            tokens['--dsw-alias-label-dimmed'][mode],
+            tokens[border][mode],
+            `${preset.id}/${mode} 占位文字又和 ${border} 变成同一个值了`
+          )
+        }
+      }
+    }
+  }
+})
+
+test('快捷键键帽与气泡底可分辨（阈值不是形同虚设）', () => {
+  // 阈值原本写 1.3，实测从未低于 1.7 —— 不可能独立失败，等于没有约束。
+  // 收紧到官方水平 2.0 之后才暴露出：v1.1 的固定 18% 白混只有 1.75，比官方还难分辨。
+  for (const preset of PRESETS) {
+    const tokens = buildTokens({
+      enabled: true,
+      preset: preset.id,
+      accent: 'deepseek',
+      radius: 'standard',
+      ambient: true,
+      motion: true,
+      typography: true,
+      glass: true
+    })
+    for (const mode of ['light', 'dark']) {
+      const key = tokens['--dsw-alias-tooltip-key-bg'][mode]
+      const bubble = tokens['--dsw-alias-tooltip-bg'][mode]
+      const legibility = contrast(key, bubble)
+      assert.ok(
+        legibility >= 2,
+        `${preset.id}/${mode} 键帽与气泡底只差 ${legibility.toFixed(3)}（要求 ≥2）`
+      )
+      // 键帽上的白字仍然要达标 —— 抬高底板不能把文字赔进去
+      assert.ok(
+        contrast('#ffffff', key) >= 4.5,
+        `${preset.id}/${mode} 键帽上的白字只有 ${contrast('#ffffff', key).toFixed(2)}`
+      )
+    }
+  }
+})
+
+test('无法解析的颜色会让对比度变成 0，而不是伪装成满分', () => {
+  // luminance 对垃圾输入的兜底是 0（按最暗处理），若 contrast 直接用这个兜底，
+  // `contrast('oops', '#ffffff')` 会得到 21:1 —— 一个拼错的令牌名拿到「满分」。
+  // 这正是本模块最该避免的静默失效，因此 contrast 必须显式返回 0。
+  assert.equal(contrast('oops', '#ffffff'), 0)
+  assert.equal(contrast('#ffffff', 'oops'), 0)
+  assert.equal(contrast('', '#ffffff'), 0)
+  assert.equal(contrast(undefined, '#ffffff'), 0)
+  // 正常输入不受影响
+  assert.ok(contrast('#000000', '#ffffff') > 20)
+})
+
+test('多约束求解：解出的颜色对**每一个**背景都达标', () => {
+  const backgrounds = ['#ffffff', '#f6f8fc', '#eef2f9', '#f3f6fb']
+  const solved = solveTone('#3f6fe0', backgrounds, 4.5)
+  for (const background of backgrounds) {
+    assert.ok(
+      contrast(solved, background) >= 4.5,
+      `${solved} 对 ${background} 只有 ${contrast(solved, background).toFixed(2)}`
+    )
+  }
+})
+
+test('每个预设 × 强调色 × 明暗都满足可读性契约', () => {
+  // 这条测试与 check.mjs 的构建期断言**同源但不同层**：check 跑在
+  // buildTokens() 的返回值上，这里跑在同一份契约上确认结果稳定可达。
+  // 两者都保留，是因为 check 只在开发时跑，而 user 装的是 bundle。
+  let checks = 0
+  for (const preset of PRESETS) {
+    for (const accent of ACCENTS) {
+      const tokens = buildTokens({
+        enabled: true,
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        ambient: true,
+        motion: true,
+        typography: true,
+        glass: true
+      })
+      const report = evaluateBoth(tokens)
+      checks += report.total
+      const detail = report.failures
+        .map((f) => `${f.id} ${f.ratio.toFixed(2)}<${f.min}`)
+        .join(', ')
+      assert.equal(
+        report.failures.length,
+        0,
+        `${preset.id}/${accent.id} 有未达标项：${detail}`
+      )
+      assert.equal(
+        report.missing.length,
+        0,
+        `${preset.id}/${accent.id} 有取不到值的配对`
+      )
+      assert.ok(report.worst.ratio >= 1.3, '最低一项不应低于非文字档底线')
+    }
+  }
+  assert.ok(checks > 2000, `契约断言次数过少（${checks}），检查项可能没跑全`)
+})
+
+test('契约跑在控制器真正投射的那一层上', () => {
+  // 前面的测试跑在 buildTokens() 上；这一条跑在**实际推给宿主的那一份**上，
+  // 覆盖「预设表算对了，但投射时被改名/丢失」这类集成缺陷。
+  const { calls, controller } = setup()
+  const latest = calls.tokens.at(-1).tokens
+  const report = evaluateBoth(latest)
+  assert.equal(report.failures.length, 0, '投射出去的令牌层必须满足可读性契约')
+  assert.equal(report.missing.length, 0)
+
+  // 换一个强调色（原本不达标的那一个）后依然成立
+  controller.setState({ accent: 'teal' })
+  const afterSwitch = evaluateBoth(calls.tokens.at(-1).tokens)
+  assert.equal(afterSwitch.failures.length, 0, '切换强调色后契约仍须成立')
+
+  // 再换预设
+  controller.setState({ preset: 'paper' })
+  assert.equal(evaluateBoth(calls.tokens.at(-1).tokens).failures.length, 0)
+})
+
+test('徽标底不再是强调色本体（v1.2 修掉的「同色压同色」）', () => {
+  // 宿主把 `--dsw-specific-sidebar-nav-item-active-accent` 当徽标底色，
+  // 而徽标文字是 `--dsw-alias-button-info-fill`。v1.1 把两者都设成完整强调色，
+  // 对比度 1.00 —— 字完全消失。这里把那条回归钉住。
+  for (const preset of PRESETS) {
+    for (const accent of ACCENTS) {
+      const tokens = buildTokens({
+        enabled: true,
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        ambient: true,
+        motion: true,
+        typography: true,
+        glass: true
+      })
+      for (const mode of ['light', 'dark']) {
+        const badgeBackground = tokens['--dsw-specific-sidebar-nav-item-active-accent'][mode]
+        const badgeText = tokens['--dsw-alias-button-info-fill'][mode]
+        assert.notEqual(
+          badgeBackground,
+          badgeText,
+          `${preset.id}/${accent.id}/${mode} 徽标底与文字又变成同色了`
+        )
+      }
+    }
+  }
+})
+
+test('文字阶梯严格递减，且各级都不低于自己的目标', () => {
+  const order = ['primary', 'dimmed', 'secondary', 'tertiary', 'caption']
+  for (let i = 1; i < order.length; i += 1) {
+    assert.ok(
+      TEXT_TIERS[order[i - 1]] > TEXT_TIERS[order[i]],
+      `阶梯 ${order[i - 1]} 应严格高于 ${order[i]}`
+    )
+  }
+  const tokens = buildTokens({
+    enabled: true,
+    preset: 'graphite',
+    accent: 'deepseek',
+    radius: 'standard',
+    ambient: true,
+    motion: true,
+    typography: true,
+    glass: true
+  })
+  // 石墨预设是 v1.1 里三级/说明文字最差的一档（3.65 / 2.50），专门盯它。
+  const surface = tokens['--dsw-alias-bg-layer-1'].light
+  const tertiary = contrast(tokens['--dsw-alias-label-tertiary'].light, surface)
+  const caption = contrast(tokens['--dsw-alias-label-caption'].light, surface)
+  assert.ok(tertiary >= TEXT_TIERS.tertiary, `三级文字 ${tertiary.toFixed(2)} 未达标`)
+  assert.ok(caption >= TEXT_TIERS.caption, `说明文字 ${caption.toFixed(2)} 未达标`)
+  assert.ok(tertiary > caption, '三级文字必须比说明文字更清楚')
+})
+
+test('语法着色接管了宿主的九个 token，并且每个都在代码底上达标', () => {
+  const names = ['constant', 'string', 'comment', 'keyword', 'parameter', 'function', 'string-expression', 'punctuation', 'link']
+  for (const preset of PRESETS) {
+    const tokens = buildTokens({
+      enabled: true,
+      preset: preset.id,
+      accent: 'deepseek',
+      radius: 'standard',
+      ambient: true,
+      motion: true,
+      typography: true,
+      glass: true
+    })
+    for (const mode of ['light', 'dark']) {
+      const background = tokens['--dsw-alias-markdown-code-block'][mode]
+      for (const name of names) {
+        const value = tokens[`--shiki-token-${name}`]
+        assert.ok(value, `${preset.id} 缺少 --shiki-token-${name}`)
+        const ratio = contrast(value[mode], background)
+        assert.ok(
+          ratio >= 4.5,
+          `${preset.id}/${mode} 语法色 ${name} 只有 ${ratio.toFixed(2)}（${value[mode]} on ${background}）`
+        )
+      }
+    }
+  }
+})
+
+test('语法色保持色相：只在明度轴上移动', () => {
+  const seeds = { comment: '#868e96', keyword: '#d6336c', string: '#2f9e44' }
+  const tokens = buildTokens({
+    enabled: true,
+    preset: 'paper',
+    accent: 'deepseek',
+    radius: 'standard',
+    ambient: true,
+    motion: true,
+    typography: true,
+    glass: true
+  })
+  for (const [name, seed] of Object.entries(seeds)) {
+    const solved = tokens[`--shiki-token-${name}`].light
+    const source = toHsl(seed)
+    const result = toHsl(solved)
+    if (source.s < 0.15) {
+      // 近灰色的色相在数值上不稳定（几个色阶的差就能让 h 转一大圈），
+      // 对它们要断言的是「仍然是一支灰」而不是「色相没变」。
+      // 注释色 #868e96 正是这种情况（饱和度约 0.04）。
+      assert.ok(
+        result.s < 0.2,
+        `${name} 本是一支近灰色（s=${source.s.toFixed(3)}），求解后却有了色相（s=${result.s.toFixed(3)}）`
+      )
+      continue
+    }
+    const delta = Math.abs(source.h - result.h)
+    assert.ok(
+      Math.min(delta, 360 - delta) <= 1,
+      `${name} 求解后色相偏移过大：${seed} → ${solved}`
+    )
+  }
+})
+
+test('面板渲染出可读性读数，且读数与契约一致', () => {
+  const { calls, controller } = setup()
+  const { render } = calls.sections[0]
+  const tree = render({ controller, t: (key) => `t:${key}` })
+
+  const texts = []
+  const classes = new Set()
+  const walk = (node) => {
+    if (node === null || node === undefined || typeof node === 'boolean') return
+    if (Array.isArray(node)) return node.forEach(walk)
+    if (typeof node !== 'object') {
+      texts.push(String(node))
+      return
+    }
+    if (typeof node.type === 'function') return walk(node.type(node.props))
+    const className = node.props?.className
+    if (typeof className === 'string') {
+      for (const name of className.split(/\s+/)) if (name) classes.add(name)
+    }
+    walk(node.props?.children)
+  }
+  walk(tree)
+
+  assert.ok(classes.has('dshb-metric'), '面板应渲染可读性读数（dshb-metric）')
+  assert.ok(classes.has('dshb-metric-value'), '读数应包含数值节点')
+  assert.ok(
+    texts.some((text) => /^\d+\.\d+:1$/.test(text)),
+    `读数应显示形如 4.5:1 的比值，实际：${JSON.stringify(texts.filter((t) => t.includes(':1')))}`
+  )
+  // 默认预设组合必须达标，因此不应出现「未达标」状态
+  assert.ok(!classes.has('dshb-metric-bad'), '默认组合不应处于未达标状态')
 })

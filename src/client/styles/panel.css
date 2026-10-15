@@ -303,6 +303,50 @@ body[data-ds-dark-theme] .dshb-swatch {
   transform: translateX(16px);
 }
 
+/* --------------------------------------------------------------- 可读性读数 */
+
+/* v1.2 新增：把「这套配色读不读得出来」从一句承诺变成面板上的数字。
+   样式刻意做成「徽标」而不是「控件」—— 它是只读状态，点不动，
+   因此不用按钮的语义，也不该有 hover 反馈。 */
+.dshb-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: var(--dsw-radius-sm);
+  corner-shape: round;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background-color: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+/* 数字用等宽字形并加粗：它是这一行里唯一需要被「读到」的内容 */
+.dshb-metric-value {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dshb-metric-tag {
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 不达标时才变红。用错误色令牌而不是写死红色，跟随主题；
+   加粗边框让小尺寸下也能一眼看出状态差异（不是只靠颜色）。 */
+.dshb-metric-bad {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dshb-metric-bad .dshb-metric-tag {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /* --------------------------------------------------------------- 页脚 */
 
 .dshb-foot {

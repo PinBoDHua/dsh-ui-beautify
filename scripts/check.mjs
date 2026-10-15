@@ -37,9 +37,16 @@ const presets = await import(
 )
 const state = await import(new URL('../src/client/state.js', import.meta.url).href)
 const locales = await import(new URL('../src/client/locales.js', import.meta.url).href)
+const readability = await import(
+  new URL('../src/client/readability.js', import.meta.url).href
+)
+const colorMath = await import(new URL('../src/client/color.js', import.meta.url).href)
 
 const { ACCENTS, PRESETS, RADIUS_SCALES, buildTokens } = presets
 const { DEFAULT_STATE, normalizeState } = state
+const { evaluate, PAIRS, TEXT_TIERS, SURFACE_KEYS, HOST_FALLBACK, surfaceColors } =
+  readability
+const { analyzeBackdrops, contrast, luminance, toHsl } = colorMath
 
 const cssFiles = readdirSync(join(SRC, 'styles')).filter((f) => f.endsWith('.css'))
 const css = Object.fromEntries(
@@ -545,6 +552,220 @@ if (JSON.stringify(garbage) !== JSON.stringify({ ...DEFAULT_STATE })) {
 } else {
   ok('脏输入防护：非法枚举/类型全部回落到默认值')
 }
+
+// ------------------------------------------------- 9.5 可读性契约（v1.2 新增）
+
+/**
+ * v1.2 把「配色读得出来」写成了 `src/client/readability.js` 里的契约，色彩由
+ * `buildTokens` 求解。这一节是它的**构建期护栏**：任何一次改色、加预设、加强调色
+ * 导致某个组合掉到达标线以下，都在这里失败 —— 而不是等用户在某个预设的浅色
+ * 模式下发现按钮上的字发虚。
+ *
+ * 覆盖范围包含 `glass` 开关：它会替换菜单材质的填充色，而菜单项文字压在它上面。
+ * `typography` / `ambient` 只改字体与光斑，不改任何一个契约配对。
+ */
+const CONTRACT_STATES = []
+for (const preset of PRESETS) {
+  for (const accent of ACCENTS) {
+    for (const glass of [true, false]) {
+      CONTRACT_STATES.push({
+        enabled: true,
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        ambient: true,
+        motion: true,
+        typography: true,
+        glass
+      })
+    }
+  }
+}
+
+let contractChecks = 0
+const contractFailures = []
+const contractMissing = []
+for (const combo of CONTRACT_STATES) {
+  const tokens = buildTokens(combo)
+  for (const mode of ['light', 'dark']) {
+    const report = evaluate(tokens, mode)
+    contractChecks += report.checks.filter((c) => c.ratio !== null).length
+    for (const failure of report.failures) {
+      contractFailures.push(
+        `${combo.preset}/${combo.accent}/${mode} ${failure.id}（${failure.label}）` +
+          ` ${failure.ratio.toFixed(2)} < ${failure.min}  ${failure.fgValue} on ${failure.bgValue}`
+      )
+    }
+    for (const absent of report.missing) {
+      contractMissing.push(
+        `${combo.preset}/${combo.accent}/${mode} ${absent.id}：取值缺失（${absent.absent}）`
+      )
+    }
+  }
+}
+if (contractFailures.length > 0) {
+  bad(
+    `可读性契约未达标 ${contractFailures.length} 处（共 ${contractChecks} 次断言）：\n      ` +
+      contractFailures.slice(0, 12).join('\n      ') +
+      (contractFailures.length > 12 ? `\n      … 另有 ${contractFailures.length - 12} 处` : '')
+  )
+} else {
+  ok(
+    `可读性契约：${CONTRACT_STATES.length} 种状态 × 2 明暗、${contractChecks} 次断言全部达标`
+  )
+}
+if (contractMissing.length > 0) {
+  bad(
+    `可读性契约中有配对取不到值 ${contractMissing.length} 处：\n      ` +
+      contractMissing.slice(0, 8).join('\n      ')
+  )
+} else {
+  ok(`可读性契约：${PAIRS.length} 条配对全部能取到取值（无缺失）`)
+}
+
+// 契约里出现、但插件**有意不覆盖**的令牌，必须真的不在覆盖层里 ——
+// 否则 fallback 是一段死代码，评估的也不是真正生效的值。
+const overrideNames = new Set()
+for (const combo of CONTRACT_STATES) {
+  for (const name of Object.keys(buildTokens(combo))) overrideNames.add(name)
+}
+for (const name of Object.keys(HOST_FALLBACK)) {
+  if (overrideNames.has(name)) {
+    bad(
+      `HOST_FALLBACK 里的 ${name} 其实已被插件覆盖 —— fallback 成了死代码，` +
+        `契约评估的不是真实生效值。请把它从 HOST_FALLBACK 移除。`
+    )
+  }
+  if (hostTokens && !hostTokens.has(name)) {
+    bad(`HOST_FALLBACK 里的 ${name} 不在宿主令牌基准表里`)
+  }
+}
+
+// fallback 是**声明**而不是猜测：这里把它与宿主基准表交叉核对。
+// 宿主升级后如果改了这些令牌的语义，这条断言会提示复核。
+if (hostTokens) {
+  ok(
+    `契约 fallback：${Object.keys(HOST_FALLBACK).length} 个未覆盖令牌都声明了官方取值并经基准表校验`
+  )
+}
+
+// 背景组必须同侧：混侧时求解器的可行区间可能为空，那属于设计错误，
+// 应当在构建期暴露，而不是让求解器给出一个奇怪的颜色。
+//
+// 「同侧」还不够。求解器对每个约束只做一次二分，这依赖「候选解始终待在表面的
+// 另一侧」—— 一旦候选色的明度越过表面自身的明度，对比度会折返（先降到 1:1 再升
+// 回去），单调性失效（实测对 #808080 这样的中间调背景，全程约 1840 档非单调）。
+// 因此真正要守住的是**墨色种子与表面之间的明度间隔**：
+// 有间隔 ⇒ 搜索区间落在表面另一侧 ⇒ 单调。
+// 实测亮侧表面最低 0.818、亮侧墨最高 0.370（间隔 0.45）；暗侧表面最高 0.028、
+// 暗侧墨最低 0.155（间隔 0.13）。这里要求至少 0.25 / 0.08，留出余量。
+// 将来加一个中间调的预设，这条断言会先失败，而不是让求解器悄悄给出劣解。
+const INK_GAP = { light: 0.25, dark: 0.08 }
+const INK_KEYS = ['ink', 'inkDimmed', 'inkSecondary', 'inkTertiary', 'inkCaption']
+for (const preset of PRESETS) {
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    const side = analyzeBackdrops(surfaces)
+    if (side === 'mixed') {
+      bad(
+        `预设 ${preset.id}.${mode} 的表面色跨了亮/暗两侧（${surfaces.join(', ')}）——` +
+          `文字求解器的前提不成立`
+      )
+      continue
+    }
+    const inks = INK_KEYS.map((key) => luminance(neutral[key]))
+    const ink = side === 'light' ? Math.max(...inks) : Math.min(...inks)
+    const values = surfaces.map(luminance)
+    const surface = side === 'light' ? Math.min(...values) : Math.max(...values)
+    const gap = Math.abs(surface - ink)
+    if (gap < INK_GAP[side]) {
+      bad(
+        `预设 ${preset.id}.${mode} 的墨色与表面只差 ${gap.toFixed(3)} 明度` +
+          `（${side} 侧要求 ≥${INK_GAP[side]}）——求解器的单调性前提不成立，会给出劣解`
+      )
+    }
+  }
+}
+ok(
+  `求解前提：${PRESETS.length * 2} 组表面色同侧，且墨色与表面至少隔开 ` +
+    `0.25（亮）/ 0.08（暗）明度 —— 二分搜索的单调性成立`
+)
+
+// 文字阶梯必须严格递减：primary > dimmed > secondary > tertiary > caption ≥ icon。
+// 反了的话「层级」这个词就没有意义 —— 这正是最容易被一次「顺手调一下」破坏的约束。
+const TIER_ORDER = ['primary', 'dimmed', 'secondary', 'tertiary', 'caption']
+for (let i = 1; i < TIER_ORDER.length; i += 1) {
+  const higher = TEXT_TIERS[TIER_ORDER[i - 1]]
+  const lower = TEXT_TIERS[TIER_ORDER[i]]
+  if (!(higher > lower)) {
+    bad(
+      `文字阶梯不是严格递减：${TIER_ORDER[i - 1]}=${higher} 未大于 ${TIER_ORDER[i]}=${lower}`
+    )
+  }
+}
+for (const [key, value] of Object.entries(TEXT_TIERS)) {
+  if (!(value > 0)) bad(`文字阶梯 ${key} 的目标对比度非法：${value}`)
+}
+ok(`文字阶梯：${TIER_ORDER.length} 级严格递减（${TIER_ORDER.join(' > ')}），icon 取非文字档`)
+
+// 求解必须**保持色相**：用户选的是「碧波青」，求解后它必须还是碧波青。
+// 只允许沿明度轴移动，色相偏差超过 1° 就说明求解器动了别的东西。
+const HUE_TOLERANCE = 1
+for (const preset of PRESETS) {
+  for (const accent of ACCENTS) {
+    for (const mode of ['light', 'dark']) {
+      const tokens = buildTokens({
+        enabled: true,
+        preset: preset.id,
+        accent: accent.id,
+        radius: 'standard',
+        ambient: true,
+        motion: true,
+        typography: true,
+        glass: true
+      })
+      const solved = tokens['--dsw-alias-brand-primary'][mode]
+      const seed = accent[mode]
+      const a = toHsl(seed).h
+      const b = toHsl(solved).h
+      const delta = Math.min(Math.abs(a - b), 360 - Math.abs(a - b))
+      if (delta > HUE_TOLERANCE) {
+        bad(
+          `强调色 ${accent.id}.${mode} 求解后色相偏移 ${delta.toFixed(1)}°` +
+            `（${seed} → ${solved}）—— 求解器只应移动明度`
+        )
+      }
+    }
+  }
+}
+ok(`求解约束：${ACCENTS.length * PRESETS.length * 2} 组强调色求解后色相偏移均 ≤ ${HUE_TOLERANCE}°`)
+
+// 强调色求解的**收益方向**：求解不得让任何一处已经达标的配色变差。
+// 这条断言防的是「求解器参数被改坏，结果是所有颜色都变暗了但没人发现」。
+for (const preset of PRESETS) {
+  for (const accent of ACCENTS) {
+    const tokens = buildTokens({
+      enabled: true,
+      preset: preset.id,
+      accent: accent.id,
+      radius: 'standard',
+      ambient: true,
+      motion: true,
+      typography: true,
+      glass: true
+    })
+    const surfaces = surfaceColors(preset.neutral.light)
+    const raw = contrast(accent.light, preset.neutral.light.surface1)
+    const solved = contrast(tokens['--dsw-alias-link'].light, surfaces[1] ?? preset.neutral.light.surface1)
+    if (raw >= 4.5 && solved < raw - 0.01) {
+      bad(
+        `强调色 ${accent.id} 原本已达标（${raw.toFixed(2)}）却被求解得更差（${solved.toFixed(2)}）`
+      )
+    }
+  }
+}
+ok('求解收益：原本达标的强调色不会被求解改差')
 
 // ------------------------------------------------- 10. 产物二次校验（按文件）
 

@@ -17,12 +17,41 @@
  * 每个令牌都必须给出 `{ light, dark }` 一对字符串；给裸字符串会被宿主的
  * validateOverrides 抛错（它在运行时真的会校验，这是官方契约）。
  *
+ * ## 本版的关键变化：承载文字的颜色改为「解出来」（v1.2）
+ * v1.1 的每个色值都是手写的。手调在「默认预设 + 默认强调色」下看不出问题，但
+ * 4 预设 × 7 强调色 × 2 明暗 = 56 种组合，人眼覆盖不了。实测漏掉四处，
+ * 其中一处是**完全看不见**的：
+ *
+ *   宿主把 `--dsw-specific-sidebar-nav-item-active-accent` 当**徽标底色**用
+ *   （ui-user-questions：`.badge { background: 该令牌; color: var(--dsw-alias-button-info-fill) }`），
+ *   而 v1.1 把这个令牌写成了完整强调色 —— 于是徽标的字与底同色，对比度 1.00。
+ *
+ * 因此 v1.2 把「读得出来」写成 `readability.js` 里的契约，并让颜色**解出来**：
+ * 中性骨架仍是手写的美术决定，但凡承载文字的颜色都过一遍 `solveTone`，达标即
+ * 原样返回。这样加第八个强调色时不会再重蹈覆辙。
+ *
  * ## 命名约定
  * - `--dsw-*`：宿主官方令牌，覆盖它即改变宿主组件外观。
  * - `--dshb-*`：本插件自有令牌（b = beautify）。它们只作为原语存在，
  *   由 styles/*.css 组合成宿主令牌 —— 用于那些宿主在每个元素上重声明、
  *   因此行内样式够不着的令牌（`--dsw-elevation-*`）。
  */
+
+import {
+  alpha,
+  ensureContrast,
+  fadeOut,
+  solveColor,
+  solveTone,
+  tint
+} from './color.js'
+import {
+  AA,
+  NON_TEXT,
+  SYNTAX_TOKENS,
+  TEXT_TIERS,
+  surfaceColors
+} from './readability.js'
 
 /** 把一对明暗值包成宿主要求的形状。 */
 const t = (light, dark) => ({ light, dark })
@@ -83,16 +112,6 @@ export const RADIUS_SCALES = [
     contentRadius: 21
   }
 ]
-
-/** 三档圆角对应的宿主令牌名。 */
-const RADIUS_TOKENS = {
-  xs: '--dsw-radius-xs',
-  sm: '--dsw-radius-sm',
-  md: '--dsw-radius-md',
-  lg: '--dsw-radius-lg',
-  xl: '--dsw-radius-xl',
-  panel: '--dsw-radius-panel'
-}
 
 /**
  * 四个预设。
@@ -518,49 +537,234 @@ const FONT_STACK = {
   code: '"Cascadia Code", "Cascadia Mono", "JetBrains Mono", "SF Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, "PingFang SC", "Microsoft YaHei", monospace'
 }
 
-/** 把十六进制颜色取出 r/g/b，用于生成实色推导。 */
-function rgb(hex) {
-  const h = hex.replace('#', '')
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
-  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16))
+/** 三档圆角对应的宿主令牌名。 */
+const RADIUS_TOKENS = {
+  xs: '--dsw-radius-xs',
+  sm: '--dsw-radius-sm',
+  md: '--dsw-radius-md',
+  lg: '--dsw-radius-lg',
+  xl: '--dsw-radius-xl',
+  panel: '--dsw-radius-panel'
 }
 
 /**
- * 把 `color` 按 `amount` 的比例混进 `base`，返回实色十六进制。
- *
- * 参数顺序刻意写成「底色在前、掺入色在后」，因为绝大多数调用都是
- * 「往画布/表面上掺一点强调色」；反过来写（先写强调色再写比例）极易读成
- * 「强调色占 amount」，从而把 12% 的淡染写成 88% 的实色 —— 这是本插件第一版
- * 真的踩过的坑：侧栏选中态与用户气泡变成了高饱和实色块。
- * 需要压暗强调色时，把 base 传成强调色、color 传成 #000000 即可。
- *
- * @param base - 底色（十六进制）。
- * @param color - 要掺入的颜色（十六进制）。
- * @param amount - 掺入比例，0..1。
+ * 浅染比例。宿主多处把强调色的淡染层当**背景**用（Tag 语气、徽标、更新指示），
+ * 而这些层由程序算出而不是用户挑的，因此比例也在这里集中定义。
  */
-function tint(base, color, amount) {
-  const a = rgb(base)
-  const b = rgb(color)
-  const c = a.map((v, i) => Math.round(v + (b[i] - v) * amount))
-  return `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`
-}
+const TINTS = Object.freeze({
+  /** ui-primitives 的 Tag info 语气：`color-mix(accent 10%, transparent)`。 */
+  tag: 0.1,
+  /** 插件自己的侧栏选中底：长期驻留视野，淡一些。 */
+  navActive: 0.13,
+  navActiveDark: 0.16,
+  /** 徽标底（宿主 .badge 直接改用该令牌）。 */
+  badge: 0.12,
+  badgeDark: 0.18
+})
 
-/** 强调色叠加 alpha（两位十六进制）。 */
-function alpha(hex, a) {
-  return `${hex}${Math.round(a * 255)
-    .toString(16)
-    .padStart(2, '0')}`
+/**
+ * 快捷键键帽底板与气泡底的最低可分辨度。
+ *
+ * 官方是 2.00（浅色）/ 1.82（深色），所以 2.0 是「至少不输给官方」这条线。
+ * v1.1 的固定 18% 白混只有 1.75 —— 阈值原本写在契约里是 1.3，等于没有约束。
+ */
+const TOOLTIP_KEY_MIN = 2
+
+/**
+ * 让一个文字色对**一整组**背景都达标。
+ *
+ * 文字不总是落在画布上：同一段灰字会出现在画布、卡片、代码块、侧栏上。
+ * 只对画布求解是不够的 —— 代码块底色比卡片暗一档，那里往往才是最先读不清的地方
+ * （实测三级文字在代码块上比在卡片上低 0.3–0.4）。
+ *
+ * `scripts/check.mjs` 有一条断言要求这组背景同属亮侧或暗侧：混侧时可行区间可能
+ * 为空，而那不是本插件会遇到的情形，应当构建期失败而不是运行期给出奇怪的颜色。
+ *
+ * @param color - 起始文字色。
+ * @param backgrounds - 该文字可能压在其上的全部背景。
+ * @param target - 目标对比度。
+ */
+function ensureContrastAllSurfaces(color, backgrounds, target) {
+  return solveTone(color, backgrounds, target)
 }
 
 /**
- * 把 8 位十六进制色的 alpha 归零，得到「同色相、全透明」的版本。
+ * 自指约束的求解余量。
  *
- * 渐变里不能用 CSS 的 `transparent` 关键字收尾：它等于 `rgb(0 0 0 / 0)`，
- * 而 sRGB 插值会把中途的颜色往**黑**里带，于是本该干净淡出的光斑边缘
- * 会出现一圈发灰的脏边。用同色相零 alpha 才能淡出自己的颜色。
+ * 自指约束（背景由被求解的颜色自己派生）在迭代里收敛到**边界**上：最后一轮解出的
+ * 颜色，其派生的背景是用上一轮颜色算的，两者相差一个 8 位色的舍入量。实测这会
+ * 让最差的一处停在 4.47 而非 4.50。给目标加一点余量，把结果推离边界，
+ * 而不是把断言放宽到 4.4 —— 后者会让真正的回归悄悄通过。
  */
-function fadeOut(color) {
-  return `${color.slice(0, 7)}00`
+const SELF_REFERENTIAL_MARGIN = 0.15
+
+/**
+ * 求解结果的缓存。
+ *
+ * 求解是纯函数（输入只有强调色与预设），但一次要跑 2 轮 × 约 40 条约束 × 26 步
+ * 二分，实测约 7ms。面板每次渲染都会调 `buildTokens`，静态审计要跑 1344 种状态
+ * 组合 —— 不缓存的话审计要多花十几秒，面板拨开关时也会掉帧。
+ *
+ * 键是「强调色 id | 预设 id」：两者都不变，结果必然相同（求解不读任何全局状态）。
+ */
+const accentCache = new Map()
+const syntaxCache = new Map()
+
+/**
+ * 求解一个强调色的两个明暗取值。
+ *
+ * ## 为什么只有一支，而不是「填充支 + 文字支」
+ * 试过拆两支（填充只对压在其上的文字负责、文字对全部表面负责），但实测两支的
+ * 解只差 1–2 个色阶（例如 `#2357d6` 与 `#2254d0`）—— 肉眼完全不可区分，
+ * 却让「同一个强调色」变成两个不同的值，用户看到的主按钮与链接会有一丝对不上，
+ * 维护者也要多记一条规则。**一个强调色就是一个身份色**，因此这里只解一支，
+ * 让它同时满足全部约束。
+ *
+ * ## 约束从哪来
+ * 强调色在本插件里承担三种角色，每一种都有对侧的约束：
+ *
+ *   1. **当底**：白字（浅色）/ 近黑字（深色）压在其上 —— 主按钮、开关轨道、
+ *      StateDot、以及 ui-conversation 那个 34px 圆形按钮。
+ *   2. **当文字**：压在全部表面色上 —— 链接、品牌文字、Tag 语气、业务强调。
+ *   3. **当浅染层的来源**：淡染层本身是背景，而它上面又要压强调色文字（自指）。
+ *      最典型的是 ui-user-questions 的徽标：底色是
+ *      `--dsw-specific-sidebar-nav-item-active-accent`（本色的淡染），
+ *      文字是 `--dsw-alias-button-info-fill`（本色自己）。
+ *
+ * ## 为什么是迭代
+ * 第 3 类约束的背景**由强调色自己派生**，所以「解强调色」与「算淡染层」互为因果。
+ * 一遍求解用的是旧色算出的淡染层；用解出的新色重算后可能又差一点。实测一遍的
+ * 余量是 4.33（目标 4.5），两遍收敛到 4.5 以上。第三轮起收益低于 8 位色的可
+ * 分辨精度，因此固定两轮 —— 轮数写成常量，而不是「跑到收敛为止」。
+ *
+ * @param accent - 强调色条目（含 `light` / `dark` 原始色）。
+ * @param preset - 预设条目（提供表面色）。
+ * @returns `{ light, dark }` 求解后的实色。
+ */
+function solveAccent(accent, preset) {
+  const cacheKey = `${accent.id}|${preset.id}`
+  const hit = accentCache.get(cacheKey)
+  if (hit !== undefined) return hit
+
+  const out = {}
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    // 压在强调色填充上的文字：浅色是纯白，深色是近黑（都是宿主的官方取值，
+    // 见 readability.js 的 HOST_FALLBACK —— 插件有意不覆盖那个令牌）。
+    const onAccent = mode === 'light' ? '#ffffff' : '#0f1115'
+    const navAmount = mode === 'light' ? TINTS.navActive : TINTS.navActiveDark
+    const badgeAmount = mode === 'light' ? TINTS.badge : TINTS.badgeDark
+
+    let color = accent[mode]
+    for (let pass = 0; pass < 2; pass += 1) {
+      const layers = []
+      for (const surface of surfaces) {
+        layers.push(
+          tint(surface, color, TINTS.tag),
+          tint(surface, color, navAmount),
+          tint(surface, color, badgeAmount)
+        )
+      }
+      layers.push(tint(neutral.sidebar, color, navAmount))
+      layers.push(tint(neutral.sidebar, color, badgeAmount))
+      const solved = solveColor(color, [
+        // 1. 当底：压在上面的文字读得出来
+        { against: onAccent, target: AA },
+        // 2. 当文字：压在全部表面上
+        ...surfaces.map((surface) => ({ against: surface, target: AA })),
+        // 3. 当文字：压在自己的淡染层上（自指，留一点余量）
+        ...layers.map((layer) => ({ against: layer, target: AA + SELF_REFERENTIAL_MARGIN }))
+      ])
+      // 无解时保留上一轮的值：`scripts/check.mjs` 的断言会把它变成构建期失败，
+      // 而不是在这里悄悄塞一个不达标的颜色。
+      if (solved === null) break
+      color = solved
+    }
+    out[mode] = color
+  }
+  accentCache.set(cacheKey, out)
+  return out
+}
+
+/**
+ * 求解语法着色。
+ *
+ * 宿主的 `shiki.css` 把九个 token 色写死在 `:root` / `[data-ds-dark-theme]` 上，
+ * 深浅两套**都与主题绑定**，却不随插件的预设走。插件改了代码块底色
+ * （`--dsw-alias-markdown-code-block`）之后，这些色就落在了一个它们从未被设计过的
+ * 底上：浅色下九个里有六个低于 AA，最差的注释只有 2.97 —— 官方底上本来也只有 3.18，
+ * 但插件把纸感的底压得更暖之后又低了 0.21。
+ *
+ * 修法是**接管这九个令牌**，按当前代码块底色求解到 AA，并且保持色相 ——
+ * 语法高亮的可读性来自「这几类 token 互相可区分」，而区分靠的是色相，
+ * 不是明度。因此这里只沿明度轴移动，不动色相。
+ *
+ * 深色下宿主的九个色本来就有 6.95 以上，求解器会原样返回 —— 实测确实一个都没变。
+ *
+ * @param shiki - 宿主原始 token 色（`{ light, dark }` 两张表）。
+ * @param preset - 预设条目（提供代码块底色）。
+ */
+function solveSyntax(shiki, preset) {
+  const cacheKey = preset.id
+  const hit = syntaxCache.get(cacheKey)
+  if (hit !== undefined) return hit
+
+  const out = {}
+  for (const mode of ['light', 'dark']) {
+    const background = preset.neutral[mode].code
+    const table = {}
+    for (const name of SYNTAX_TOKENS) {
+      table[name] = ensureContrast(shiki[mode][name], background, AA)
+    }
+    out[mode] = table
+  }
+  syntaxCache.set(cacheKey, out)
+  return out
+}
+
+/** 宿主 `theme/shiki.css` 的九个 token 色，逐字节照抄。求解器以此为起点。 */
+const HOST_SHIKI = Object.freeze({
+  light: Object.freeze({
+    constant: '#1c7ed6',
+    string: '#2f9e44',
+    comment: '#868e96',
+    keyword: '#d6336c',
+    parameter: '#e8590c',
+    function: '#6741d9',
+    'string-expression': '#2b8a3e',
+    punctuation: '#495057',
+    link: '#1971c2'
+  }),
+  dark: Object.freeze({
+    constant: '#4dabf7',
+    string: '#69db7c',
+    comment: '#adb5bd',
+    keyword: '#faa2c1',
+    parameter: '#ffa94d',
+    function: '#b197fc',
+    'string-expression': '#8ce99a',
+    punctuation: '#ced4da',
+    link: '#74c0fc'
+  })
+})
+
+/**
+ * 面板色板要显示的颜色 —— **求解后**的取值，而不是配色表里的原始值。
+ *
+ * 为什么必须求解后再显示：求解会沿明度轴微调强调色（最多约 11%），如果色板画的是
+ * 原始值、界面用的是求解值，用户就会看到「我选的那个颜色和我得到的不一样」。
+ * 色板上的那一点必须是最终会渲染出来的那一点，否则这一版新增的求解就成了
+ * 一件用户看不见、也无法预期的事。
+ *
+ * @param presetId - 当前预设 id（求解依赖预设的表面色）。
+ * @returns `{ [accentId]: { light, dark } }`。
+ */
+export function accentSwatches(presetId) {
+  const preset = PRESETS.find((p) => p.id === presetId) ?? PRESETS[0]
+  const out = {}
+  for (const accent of ACCENTS) out[accent.id] = solveAccent(accent, preset)
+  return out
 }
 
 /**
@@ -571,12 +775,46 @@ function fadeOut(color) {
  */
 export function buildTokens(state) {
   const preset = PRESETS.find((p) => p.id === state.preset) ?? PRESETS[0]
-  const accent = ACCENTS.find((a) => a.id === state.accent) ?? ACCENTS[0]
+  const accentEntry = ACCENTS.find((a) => a.id === state.accent) ?? ACCENTS[0]
   const radius = RADIUS_SCALES.find((r) => r.id === state.radius) ?? RADIUS_SCALES[1]
   const L = preset.neutral.light
   const D = preset.neutral.dark
   const SL = preset.shadow.light
   const SD = preset.shadow.dark
+
+  /**
+   * 强调色与它的派生量在这里统一解出来。
+   * 手写取值只提供色相与饱和度，明度由求解器按可读性契约决定 —— 见 `solveAccent`。
+   */
+  const accent = solveAccent(accentEntry, preset)
+  const syntax = solveSyntax(HOST_SHIKI, preset)
+
+  /**
+   * 文字阶梯也过一遍求解：四个预设的墨色是美术选择，但「三级文字能不能读」
+   * 不该由美术选择决定。实测石墨与纸感的浅色下三级文字只有 3.65 / 3.88，
+   * 比官方基线（3.71）还低 —— 求解器把它们抬到 AA。
+   */
+  const neutralText = {}
+  for (const mode of ['light', 'dark']) {
+    const neutral = preset.neutral[mode]
+    const surfaces = surfaceColors(neutral)
+    const canvas = neutral.canvas
+    const all = [...surfaces, canvas]
+    neutralText[mode] = {
+      ink: ensureContrast(neutral.ink, canvas, TEXT_TIERS.primary),
+      inkDimmed: ensureContrastAllSurfaces(neutral.inkDimmed, all, TEXT_TIERS.dimmed),
+      inkSecondary: ensureContrastAllSurfaces(neutral.inkSecondary, all, TEXT_TIERS.secondary),
+      inkTertiary: ensureContrastAllSurfaces(neutral.inkTertiary, all, TEXT_TIERS.tertiary),
+      inkCaption: ensureContrastAllSurfaces(neutral.inkCaption, all, TEXT_TIERS.caption),
+      // 占位文字（`--dsw-alias-label-dimmed`）是**正文**，不是描边：
+      // 宿主唯一的消费者是 `.input::placeholder`，14px。v1.1 把它绑在描边色上，
+      // 实测只有 1.48–2.00:1。这里从说明文字那支墨出发解到 AA ——
+      // 从 inkCaption 起步而不是 inkTertiary，是为了让占位文字比三级文字淡一点，
+      // 保持「提示 < 正文」的层级感。
+      placeholder: ensureContrastAllSurfaces(neutral.inkCaption, all, AA),
+      icon: ensureContrastAllSurfaces(neutral.icon, all, NON_TEXT)
+    }
+  }
 
   /** 令牌表。先铺中性骨架，再叠强调色派生量，便于审阅。 */
   const tokens = {}
@@ -599,12 +837,20 @@ export function buildTokens(state) {
   // 选中态用强调色「淡染」surface，而不是铺满强调色：侧栏是长期停留在视野里的
   // 区域，高饱和实色会在几分钟内变成视觉噪音。
   tokens['--dsw-specific-sidebar-nav-item-active'] = t(
-    tint(L.sidebar, accent.light, 0.13),
-    tint(D.sidebar, accent.dark, 0.19)
+    tint(L.sidebar, accent.light, TINTS.navActive),
+    tint(D.sidebar, accent.dark, TINTS.navActiveDark)
   )
+  // **这是 v1.2 修掉的一处真实缺陷，也是本版最严重的一处。**
+  // 宿主把它当徽标**底色**用（ui-user-questions：
+  // `.badge { background: 该令牌; color: var(--dsw-alias-button-info-fill) }`）。
+  // v1.1 在这里写的是完整强调色，而 `button-info-fill` 用的也是同一个强调色 ——
+  // 于是徽标的字与底**完全同色**，对比度 1.00，字数完全消失。
+  //
+  // 现在它是一层淡染，与官方语义一致（浅色 deepseek-100、深色 bluish-800
+  // 都是「同系但更接近底色的浅染层」，而不是强调色本体）。
   tokens['--dsw-specific-sidebar-nav-item-active-accent'] = t(
-    accent.light,
-    accent.dark
+    tint(L.sidebar, accent.light, TINTS.badge),
+    tint(D.sidebar, accent.dark, TINTS.badgeDark)
   )
   tokens['--dsw-specific-sidebar-nav-item-hover'] = t(
     tint(L.sidebar, accent.light, 0.06),
@@ -617,34 +863,63 @@ export function buildTokens(state) {
   tokens['--dsw-alias-border-l2-darkmode-thin'] = t(L.border1, D.border1)
   tokens['--dsw-alias-border-l3'] = t(L.border3, D.border3)
   tokens['--dsw-alias-border-l4'] = t(L.border4, D.border4)
-  tokens['--dsw-alias-border-inverted'] = t(L.border3, D.border2)
-  tokens['--dsw-alias-border-inverted2'] = t(L.border2, D.border1)
+  // 官方把这两个写成 `transparent` —— 语义是「这个方向有意不画线」，不是
+  // 「一条几乎看不见的线」。v1.1 给了它们可见的描边色，于是在官方刻意留白的
+  // 位置（账户对话框、命令面板重试按钮）多出边框。v1.2 交回透明。
+  tokens['--dsw-alias-border-inverted'] = t('#00000000', '#ffffff0f')
+  tokens['--dsw-alias-border-inverted2'] = t('#00000000', '#ffffff14')
 
   // ---- 文本与图标 ---------------------------------------------------------
-  tokens['--dsw-alias-label-primary'] = t(L.ink, D.ink)
-  tokens['--dsw-alias-label-primary-dimmed'] = t(L.inkDimmed, D.inkDimmed)
+  tokens['--dsw-alias-label-primary'] = t(neutralText.light.ink, neutralText.dark.ink)
+  tokens['--dsw-alias-label-primary-dimmed'] = t(
+    neutralText.light.inkDimmed,
+    neutralText.dark.inkDimmed
+  )
   tokens['--dsw-alias-label-primary-inverted'] = t(L.surface1, D.surface1)
-  tokens['--dsw-alias-label-secondary'] = t(L.inkSecondary, D.inkSecondary)
-  tokens['--dsw-alias-label-tertiary'] = t(L.inkTertiary, D.inkTertiary)
-  tokens['--dsw-alias-label-caption'] = t(L.inkCaption, D.inkCaption)
-  tokens['--dsw-alias-label-dimmed'] = t(L.border4, D.border3)
-  tokens['--dsw-alias-menu-icon'] = t(L.icon, D.icon)
-  tokens['--dsw-alias-label-primary-bluish'] = t(L.ink, D.ink)
+  tokens['--dsw-alias-label-secondary'] = t(
+    neutralText.light.inkSecondary,
+    neutralText.dark.inkSecondary
+  )
+  tokens['--dsw-alias-label-tertiary'] = t(
+    neutralText.light.inkTertiary,
+    neutralText.dark.inkTertiary
+  )
+  tokens['--dsw-alias-label-caption'] = t(
+    neutralText.light.inkCaption,
+    neutralText.dark.inkCaption
+  )
+  tokens['--dsw-alias-label-dimmed'] = t(
+    neutralText.light.placeholder,
+    neutralText.dark.placeholder
+  )
+  tokens['--dsw-alias-menu-icon'] = t(neutralText.light.icon, neutralText.dark.icon)
+  tokens['--dsw-alias-label-primary-bluish'] = t(neutralText.light.ink, neutralText.dark.ink)
 
   // ---- 品牌与强调 ---------------------------------------------------------
   // 官方主题在浅色下用近黑、深色下用近白做主按钮，界面因此缺少识别色。
   // 这里把品牌位交给强调色，是整套美化里视觉收益最大的一处改动。
+  //
+  // 下面这一组**共用同一个求解结果**：宿主把它们分别当「底」与「字」用，
+  // 但官方主题里它们的取值本来就相同（都是品牌色），因此插件也保持一致 ——
+  // 一个强调色就是一个身份色，不该在按钮与链接之间出现两个色阶。
+  // 求解器已把所有角色（当底承载白字、当字压遍全部表面与自指淡染层）
+  // 一起算进约束，所以同一个值在两种角色下都成立。
   tokens['--dsw-alias-brand-primary'] = t(accent.light, accent.dark)
   tokens['--dsw-alias-brand-primary-invert'] = t(L.surface1, D.canvas)
   tokens['--dsw-alias-brand-text'] = t(accent.light, accent.dark)
+  // 设置里的「更新可用」指示与账户提示图标都用它当文字色，底是它自己的 8% 淡染。
+  // 文字支的求解已经把 8% 淡染层算进约束里，因此这里直接复用。
   tokens['--dsw-alias-brand-primary-new-colorprimary-new-color'] = t(
     accent.light,
     accent.dark
   )
   tokens['--dsw-alias-button-primary-fill'] = t(accent.light, accent.dark)
+  // 悬停色是**另一个底**，压在它上面的还是同一支前景色（白/近黑），因此它也要过
+  // 一遍求解。v1.1 直接朝黑/白各混 14%/16%，实测浅色下碧波青的悬停态只有 3.5 ——
+  // 比常态还低，鼠标一放上去按钮文字就糊了。
   tokens['--dsw-alias-button-primary-hover'] = t(
-    tint(accent.light, '#000000', 0.14),
-    tint(accent.dark, '#ffffff', 0.16)
+    solveTone(tint(accent.light, '#000000', 0.14), ['#ffffff'], AA),
+    solveTone(tint(accent.dark, '#ffffff', 0.16), ['#0f1115'], AA)
   )
   tokens['--dsw-alias-button-primary-dimmed'] = t(
     tint(accent.light, L.canvas, 0.82),
@@ -652,19 +927,24 @@ export function buildTokens(state) {
   )
   tokens['--dsw-alias-button-info-fill'] = t(accent.light, accent.dark)
   tokens['--dsw-alias-button-info-hover'] = t(
-    tint(accent.light, '#000000', 0.12),
-    tint(accent.dark, '#ffffff', 0.14)
+    solveTone(tint(accent.light, '#000000', 0.12), ['#ffffff'], AA),
+    solveTone(tint(accent.dark, '#ffffff', 0.14), ['#0f1115'], AA)
   )
   tokens['--dsw-alias-state-business-primary'] = t(accent.light, accent.dark)
+  // 业务浅底：Tag 的 info 语气、徽标与状态标签用它当底，强调色文字压在上面。
+  // 由**文字支**派生 —— 与求解文字支时假设的淡染层一致，契约才算得准。
   tokens['--dsw-alias-state-business-tertiary'] = t(
-    tint(accent.light, L.surface1, 0.88),
-    tint(accent.dark, D.surface1, 0.82)
+    tint(L.surface1, accent.light, 0.12),
+    tint(D.surface1, accent.dark, 0.18)
   )
   tokens['--dsw-alias-link'] = t(accent.light, accent.dark)
   tokens['--dsw-focus-ring-color'] = t(accent.light, accent.dark)
   tokens['--dsw-alias-label-deep-diving'] = t(accent.light, accent.dark)
 
   // ---- 交互态 -------------------------------------------------------------
+  // 这些淡染层之上压的是正文（`--dsw-alias-label-primary`）或强调色本身，
+  // 因此淡染的来源统一用**文字支**：它比填充支更暗（浅色）/更亮（深色），
+  // 用它算出来的淡染层与文字之间的对比度才不会在边缘上打滑。
   tokens['--dsw-alias-interactive-bg-hover'] = t(
     alpha(accent.light, 0.08),
     alpha(accent.dark, 0.12)
@@ -681,9 +961,11 @@ export function buildTokens(state) {
     tint(L.canvas, accent.light, 0.07),
     tint(D.canvas, accent.dark, 0.12)
   )
+  // 幽灵激活态：底色之上压的是 `--dsw-alias-label-primary`（正文色），
+  // 因此这里求解的是**底色**而不是文字色 —— 淡染太重会让正文读不清。
   tokens['--dsw-alias-button-ghost-active-fill'] = t(
-    tint(L.surface1, accent.light, 0.1),
-    tint(D.surface1, accent.dark, 0.16)
+    ensureContrast(tint(L.surface1, accent.light, 0.1), neutralText.light.ink, AA),
+    ensureContrast(tint(D.surface1, accent.dark, 0.16), neutralText.dark.ink, AA)
   )
   tokens['--dsw-alias-button-ghost-active-hover'] = t(
     tint(L.surface1, accent.light, 0.16),
@@ -705,10 +987,23 @@ export function buildTokens(state) {
     tint(L.surface1, accent.light, 0.19),
     tint(D.surface1, accent.dark, 0.27)
   )
+  // 选区底：正文（label-primary）压在其上。32% 是官方强度，但强调色比官方蓝
+  // 更深时这个叠加会明显变暗，因此由求解器把它挡在 AA 之外。
   tokens['--dsw-alias-bg-document-selection'] = t(
     alpha(accent.light, 0.32),
     alpha(accent.dark, 0.34)
   )
+
+  // ---- 代码语法着色 -------------------------------------------------------
+  // 宿主的九个 token 色写在 `:root` 上，深浅两套都与主题绑定却不随预设走。
+  // 插件改了代码块底色之后它们就落在了没被设计过的底上（浅色下六个低于 AA）。
+  // 这里按当前底色逐个求解，保持色相不变 —— 见 solveSyntax。
+  for (const name of SYNTAX_TOKENS) {
+    tokens[`--shiki-token-${name}`] = t(
+      syntax.light[name],
+      syntax.dark[name]
+    )
+  }
 
   // ---- 菜单与浮层 ---------------------------------------------------------
   tokens['--dsw-menu-surface-fill'] = t(L.menu, D.menu)
@@ -736,9 +1031,15 @@ export function buildTokens(state) {
   tokens['--dsw-alias-toast-bg'] = t(L.toast, D.toast)
   tokens['--dsw-alias-toast-label'] = t('#ffffff', '#f7f9fc')
   tokens['--dsw-alias-tooltip-bg'] = t(L.toast, D.toast)
+  // 键帽底板要与气泡底**可分辨**（契约要求 ≥2.0；官方 2.00 / 1.82）。
+  // v1.1 用的是固定 18% 白混，实测只有 1.75 —— 比官方还难分辨，属于
+  // 「看着没问题、量出来才知道」的那一类。现在从同一个混合值出发按底线求解，
+  // 解不出来就退回原值（不会为了达标把键帽变成一块突兀的亮片）。
   tokens['--dsw-alias-tooltip-key-bg'] = t(
-    tint(L.toast, '#ffffff', 0.18),
-    tint(D.toast, '#ffffff', 0.18)
+    solveTone(tint(L.toast, '#ffffff', 0.18), [L.toast], TOOLTIP_KEY_MIN) ??
+      tint(L.toast, '#ffffff', 0.18),
+    solveTone(tint(D.toast, '#ffffff', 0.18), [D.toast], TOOLTIP_KEY_MIN) ??
+      tint(D.toast, '#ffffff', 0.18)
   )
 
   // ---- 滚动条 -------------------------------------------------------------

@@ -278,6 +278,21 @@
             </div>
           </div>
 
+          <!-- v1.2 新增的可读性读数。数值由脚本按真实令牌层算出后填进来
+               （见文件末尾的 DSHB_READABILITY 渲染），不是写死的装饰。 -->
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">可读性</div>
+              <div class="dshb-row-hint">全部文字与底色的对比度下限（WCAG AA）</div>
+            </div>
+            <div class="dshb-row-control">
+              <span class="dshb-metric" id="panel-readability">
+                <span class="dshb-metric-value">—</span>
+                <span class="dshb-metric-tag">—</span>
+              </span>
+            </div>
+          </div>
+
           <div class="dshb-row">
             <div class="dshb-row-text">
               <div class="dshb-row-title">氛围光</div>
@@ -521,6 +536,17 @@
       </div>
     </div>
 
+    <!-- ============ 语法着色画廊（v1.2 新增功能） ============
+         宿主把九个 `--shiki-token-*` 写死在 shiki.css 的 :root 上，深浅两套都不随
+         预设走；插件换了代码块底色之后它们就落在没被设计过的底上。v1.2 接管这九个
+         令牌并按当前代码底求解到 AA。
+
+         这里把四个预设并排渲染：每一列把该预设的真实令牌设在自己的子树上
+         （与圆角画廊同一手法），代码块里的每一类 token 用 var(--shiki-token-*) 上色。
+         因此这一页证明的是「同一段代码在四个预设下都读得出来，且色相身份保持」。
+    -->
+    <div id="syntax-stage" hidden></div>
+
     <!-- 插件 buildTokens() 的真实输出快照，以及插件自己的四张样式表 -->
     <script src="build/tokens.js"></script>
     <script src="build/plugin-styles.js"></script>
@@ -606,6 +632,14 @@
         // 版本徽标的内容也来自构建产物，与面板里显示的是同一个值
         const versionTag = document.getElementById('panel-version')
         if (versionTag) versionTag.textContent = 'v' + (window.DSHB_VERSION || '?')
+        renderReadability()
+      }
+      if (view === 'syntax') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('syntax-stage').hidden = false
+        document.getElementById('caption').textContent =
+          '语法着色画廊 · 每个预设的代码底 × 真实 token 色 · ' + (mode === 'dark' ? '深色' : '浅色')
+        renderSyntaxGallery()
       }
       if (view === 'frame') {
         document.querySelector('.app').style.display = 'none'
@@ -652,6 +686,78 @@
             box-shadow: inset 0 1px 0 0 var(--dsw-alias-border-l1);
           }`
         document.head.appendChild(tag)
+      }
+
+      /**
+       * 把可读性读数填进设置面板那一行。
+       *
+       * 数值来自 `window.DSHB_READABILITY` —— 由 prepare.mjs 用**真实的
+       * readability.js** 对真实令牌层算出，而不是这一页另写一份对比度公式。
+       * 页面里出现第二份实现就是漂移：测试台会用它自己的算法证明自己达标。
+       */
+      function renderReadability() {
+        const chip = document.getElementById('panel-readability')
+        const data = (window.DSHB_READABILITY || {})[stateId]
+        if (!chip || !data) return
+        const value = chip.querySelector('.dshb-metric-value')
+        const tag = chip.querySelector('.dshb-metric-tag')
+        value.textContent = data.worst.toFixed(1) + ':1'
+        tag.textContent = data.failing > 0 ? data.failing + ' 项未达标' : '全部达标'
+        chip.title =
+          '最低 ' + data.worst + ':1（' + data.worstLabel + '）· 共 ' + data.total + ' 项检查'
+        if (data.failing > 0) chip.classList.add('dshb-metric-bad')
+      }
+
+      /**
+       * 语法着色画廊：四个预设并排，同一段代码、同一套 token 类别。
+       *
+       * 每一列把该预设的**全部令牌**设在自己的子树上（与圆角画廊同一手法，
+       * 自定义属性向下继承），因此四列可以在一张图里对照。
+       * 代码块里的颜色一律写成 `var(--shiki-token-*)` —— 这正是宿主的用法，
+       * 因此这一页证明的是「插件投射的 token 值会让宿主真的变样」。
+       */
+      function renderSyntaxGallery() {
+        const stage = document.getElementById('syntax-stage')
+        const states = (window.DSHB_SYNTAX || [])
+        const LINES = [
+          [['comment', '// 语法色随代码底重解']],
+          [['keyword', 'const'], ['plain', ' SOURCE = '], ['string', "'lumina'"]],
+          [['keyword', 'export'], ['plain', ' function '], ['function', 'apply'], ['punctuation', '('], ['parameter', 'ctx'], ['punctuation', ') {']],
+          [['plain', '  ctx.theme.'], ['function', 'overrideTokens'], ['punctuation', '('], ['constant', 'SOURCE'], ['punctuation', ')']],
+          [['punctuation', '}']]
+        ]
+        for (const entry of states) {
+          const col = document.createElement('div')
+          col.className = 'sx-col'
+          // 整套令牌挂到列根：列内所有后代都能解析 var(--shiki-token-*)
+          const tokens = (window.DSHB_TOKENS || {})[entry.id]
+          if (tokens) {
+            for (const [name, pair] of Object.entries(tokens)) {
+              col.style.setProperty(name, pair[mode])
+            }
+          }
+          const head = document.createElement('div')
+          head.className = 'sx-head'
+          head.textContent = entry.label
+          const sub = document.createElement('div')
+          sub.className = 'sx-sub'
+          sub.textContent = '代码底 ' + (entry.code ? entry.code[mode] : '?')
+          const pre = document.createElement('pre')
+          pre.className = 'sx-code shiki'
+          for (const tokensInLine of LINES) {
+            const line = document.createElement('div')
+            line.className = 'line'
+            for (const [kind, text] of tokensInLine) {
+              const span = document.createElement('span')
+              if (kind !== 'plain') span.style.color = 'var(--shiki-token-' + kind + ')'
+              span.textContent = text
+              line.appendChild(span)
+            }
+            pre.appendChild(line)
+          }
+          col.append(head, sub, pre)
+          stage.appendChild(col)
+        }
       }
 
       /** 渲染三档圆角并排的画廊。每列的令牌只作用在自己的子树上。 */

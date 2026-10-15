@@ -7,6 +7,8 @@
 
 - 走官方唯一支持的扩展点 `ctx.theme.overrideTokens()`，**不劫持组件、不改宿主代码**；
 - 卸载或关闭总开关后界面**零残留**地回到官方原样；
+- **配色不是手调的，而是解出来的**：凡承载文字的颜色都过一遍 WCAG 达标求解，
+  构建期对全部 56 种组合做 4704 次对比度断言；
 - 手写客户端 bundle，**不引入任何第三方依赖**，构建脚本零 npm 包；
 - 自带静态审计 + 运行时集成测试 + Chromium 渲染验证台。
 
@@ -30,8 +32,76 @@
 | 选中态 | 灰底 | 强调色**淡染**（13%），长期驻留不刺眼 |
 | 圆角 | 12 / 16 / 28 | 可切三档，全部令牌联动 |
 | 排版 | 行高 24px | 行高 25px + 标题阶梯同步上调 + 等宽数字 |
+| **代码高亮** | 九色写死，浅色下 6 个不达 AA | **随预设重解**，全部 ≥4.5:1 |
 
 ![深色对比](verify/out/compare-shell-dark.png)
+
+### 可读性：配色不是调出来的，是解出来的
+
+这是 1.2 的主题。上一版的每个色值都是手写的 —— 在「默认预设 + 默认强调色」下
+看着没问题，但组合有 **4 预设 × 7 强调色 × 2 明暗 = 56 种**，手调覆盖不了。
+把这 56 种组合逐对算过 WCAG 对比度之后，找到 6 处真实缺陷，最严重的一处是
+**字完全消失**：
+
+> 宿主把 `--dsw-specific-sidebar-nav-item-active-accent` 当徽标**底色**用
+> （`ui-user-questions`：`.badge { background: 该令牌; color: var(--dsw-alias-button-info-fill) }`）。
+> 上一版把这个令牌写成了完整强调色，而 `button-info-fill` 也是同一个强调色 ——
+> 于是徽标的字与底一模一样，**对比度 1.00**。
+
+现在配色这样产生：
+
+| 环节 | 做法 |
+| --- | --- |
+| **契约** | `readability.js` 声明 42 条「谁压在谁上、最低多少」，是唯一真相来源 |
+| **求解** | `color.js` 沿明度轴把颜色移到达标位置，**保持色相**；已达标则原样返回 |
+| **护栏** | `scripts/check.mjs` 对 56 种状态 × 2 明暗跑 **4704 次断言**，不达标即构建失败 |
+| **可见** | 设置面板里显示当前组合的最低对比度与达标状态 |
+
+发布前又跑了一轮**独立的对抗性复核**（自己重写一套 WCAG 计算、不调用本仓库的
+评估器）：6 项声明全部证实，包括把三个不同类别的违规注入副本、确认
+`check.mjs` 真的以非零退出 —— 护栏不是摆设。复核同时找出 2 处漏网的令牌，
+见下面的「占位文字」与「快捷键键帽」。
+
+求解只动明度、不动色相：你选的「碧波青」求解后**还是碧波青**，只是深了一点
+（实测最多 11% 明度，色相偏移 ≤0.81°）。已经达标的颜色一律原样返回 ——
+14 组「强调色 × 明暗」里有 5 组逐字节未改（深色下多数如此，浅色下石墨灰也是），
+它们在四个预设上重复，因此 56 组里共 20 组未动。其余的不是「统一压暗一遍」，
+而是各自解到自己刚好达标的位置。
+
+契约里有两条容易被忽略、但确实存在的约束：
+
+- **自指约束**：淡染层（Tag 语气、徽标底、侧栏选中底）由强调色自己派生，
+  而它上面又要压强调色文字 —— 背景依赖求解目标本身，所以要迭代两轮收敛。
+- **fallback 是声明，不是猜测**：`--dsw-alias-label-primary-foreground`
+  （白字 / 近黑字）由主按钮、开关滑块、StateDot 共用，插件**有意不覆盖**它，
+  改为让强调色去满足它。这个取值在契约里显式登记，并有断言确保它真的没被覆盖 ——
+  否则 fallback 就是一段死代码。
+
+### 契约管不到的地方，就是问题藏着的地方
+
+这一版最值得记的一条教训来自**发布前的独立复核**：它找出两处漏网，而且都不是
+「算错了」，是**根本没被算**。
+
+| 漏网 | 实际情况 | 现在 |
+| --- | --- | --- |
+| `--dsw-alias-label-dimmed` | 被绑成描边色，而宿主拿它当 **14px 输入框占位文字**：实测 1.48–2.00:1，连 3:1 都不到，41 条配对里**没有一条覆盖它** | 按正文求解到 AA（最低 5.23），并补上契约配对 |
+| 快捷键键帽 vs 气泡底 | 阈值写着 1.3，而实测从未低于 1.7 —— 永远不可能失败的断言；收紧到官方水平 2.0 后才发现实际只有 **1.75，比官方还难分辨** | 按 2.0 求解（最低 2.000） |
+
+两条都说明同一件事：**断言的覆盖面本身才是最容易被忽略的东西**。
+所以这版还加了一条前置断言 —— 检查每个预设的墨色与表面色之间留有足够明度间隔，
+因为求解器的二分搜索只在那个前提下单调；将来有人加一个中间调的预设，
+它会先失败，而不是让求解器悄悄给出劣解。
+
+### 代码高亮也跟着预设走
+
+宿主的九个 `--shiki-token-*` 写死在 `shiki.css` 的 `:root` 上，深浅两套都与主题
+绑定、却不随插件预设走。插件把代码块底色换成预设色之后，它们就落在一个从未被
+设计过的底上 —— 浅色下**九个里有六个低于 AA**，最差的注释只有 2.97（官方底上
+本来也只有 3.18，纸感更暖的底又低了 0.21）。现在这九个 token 按当前代码底逐个
+求解，色相保持：同一段代码在四个预设下都读得出来，且「关键字偏红、字符串偏绿」
+这套语言没有变。
+
+![语法着色画廊](verify/out/compare-syntax.png)
 
 ### 圆角
 
@@ -194,8 +264,9 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
 | --- | --- |
 | **总开关** | 关闭即整套撤回：令牌层清空、六张样式表移除、`data-dshb-*` 属性清空 |
 | **预设风格** | 四套骨架，各含明暗两套完整配色 |
-| **强调色** | 七个色相；浅色/深色分别调校，不是同一色的透明度变化 |
+| **强调色** | 七个色相；浅色/深色分别调校，并各自**求解到 WCAG AA**（色相不变） |
 | **圆角** | 紧凑 / 标准 / 圆润三档**逐档设计值**，联动全部 `--dsw-radius-*` |
+| **可读性**（只读） | 当前组合的最低对比度与达标状态，数值来自与构建期同一份契约 |
 | **氛围光** | 侧栏叠一层低透明度光斑 |
 | **内容精修** | 行高、字距、等宽数字、代码块与表格细节 |
 | **任务列表增强** | 三态一眼可辨：已完成降权划线，进行中高亮 |
@@ -223,27 +294,28 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
 
 ## 它会覆盖宿主哪些令牌
 
-共 **101 个宿主令牌 + 12 个插件自有原语**，分组如下：
+共 **98 个 `--dsw-*` 宿主令牌 + 9 个 `--shiki-*` 语法色 + 1 个宿主排版量
++ 9 个插件自有原语**（另有 2 个仅在关闭毛玻璃时覆盖），分组如下：
 
 | 分组 | 数量 | 代表令牌 |
 | --- | --- | --- |
-| 画布与表面 | 14 | `--dsw-alias-bg-base`、`--dsw-specific-sidebar-fill` |
-| 侧栏导航 | 3 | `--dsw-specific-sidebar-nav-item-active` |
-| 边框 | 7 | `--dsw-alias-border-l1` … `l4` |
-| 文本与图标 | 9 | `--dsw-alias-label-primary`、`--dsw-alias-menu-icon` |
-| 品牌与强调 | 12 | `--dsw-alias-brand-primary`、`--dsw-focus-ring-color` |
-| 交互态 | 8 | `--dsw-alias-interactive-bg-hover` |
-| 气泡与选区 | 3 | `--dsw-specific-bubble`、`--dsw-alias-bg-document-selection` |
-| 菜单与浮层 | 3 | `--dsw-menu-surface-fill`、`--dsw-menu-backdrop-filter` |
-| 代码与 Markdown | 9 | `--dsw-alias-markdown-code-block` |
+| 画布与表面 | 13 | `--dsw-alias-bg-base`、`--dsw-alias-bg-document-preview` |
+| 侧栏导航 | 4 | `--dsw-specific-sidebar-nav-item-active`、`…-active-accent` |
+| 边框 | 8 | `--dsw-alias-border-l1` … `l4`、`--dsw-alias-button-ghost-active-border` |
+| 文本与图标 | 11 | `--dsw-alias-label-primary`、`--dsw-alias-menu-icon` |
+| 品牌与强调 | 19 | `--dsw-alias-brand-primary`、`--dsw-focus-ring-color`、`--dsw-alias-interactive-bg-hover` |
+| 气泡 / 选区 / 开关 | 3 | `--dsw-specific-bubble`、`--dsw-alias-switch-thumb` |
+| 菜单与浮层 | 3 | `--dsw-menu-surface-fill`、`--dsw-alias-menu-group-header-fill` |
+| 代码与 Markdown | 18 | `--dsw-alias-markdown-code-block`、`--dsw-font-markdown-*` 阶梯 |
 | 提示与轻提示 | 4 | `--dsw-alias-toast-bg`、`--dsw-alias-tooltip-bg` |
-| 滚动条 | 5 | `--dsw-alias-scrollbar-bg-l1` |
-| 文档预览 | 2 | `--dsw-alias-bg-document-preview` |
+| 滚动条 | 4 | `--dsw-alias-scrollbar-bg-l1` |
 | 阴影阶 | 4 | `--dsw-shadow-lv1` … `lv3` |
+| 圆角 | 6 | `--dsw-radius-xs` … `-panel` |
+| 排版 | 1 | `--dsw-font-family` |
+| **代码语法着色** | **9** | `--shiki-token-comment` … `punctuation`（v1.2 新增） |
 | 高度（原语） | 4 | `--dshb-elev-panel` 等，由样式表组合成 `--dsw-elevation-*` |
 | 氛围光（原语） | 2 | `--dshb-ambient-a` / `-b` |
-| 圆角 | 6 | `--dsw-radius-xs` … `-panel` |
-| 排版 | 9 | `--dsw-font-family`、`--ds-font-family-code`、Markdown 阶梯 |
+| 圆角 / 内容圆角（原语） | 2 | `--dshb-content-radius` |
 
 完整清单与明暗取值见 `verify/out/` 的渲染结果与
 `reference/host-tokens.json`（宿主 432 个令牌基准表）。
@@ -255,6 +327,10 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
 - **插件只让已有状态读得出来，不修正数据**。任务面板若显示「10 待处理」，
   那是宿主的 todo 投影里确实一条 completed 都没有 —— 需要 agent 更新待办时
   标记完成，CSS 改不了这个。
+- **强调色会被求解器沿明度轴微调**（最多约 11%，色相与饱和度不变）。
+  这是「保证读得出来」的代价：你选的色相就是最终渲染的色相，但明度可能比
+  色板上那一点更深或更浅。达标的颜色不会被碰。面板上的强调色板显示的是
+  **求解后**的值，所见即所得。
 - **氛围光只作用于侧栏**。它曾经也挂在窗口框架上，结果在 Windows 标题栏模式下
   被内容区左上角那个圆角切成一块硬边蓝楔形 —— 框架的 `background-image` 原点
   （`background-origin: padding-box`）恰好就在内容区左上角。现在框架恢复为纯色，
@@ -267,6 +343,11 @@ CLI 会把它装进 profile 的 `node_modules`，并因为本包声明了 `dsh.b
   （宿主按注册顺序叠加，后来者胜）。这是宿主的设计，不是缺陷。
 - **偏好存 `localStorage`**：换浏览器/清缓存会丢，因为宿主的 settings schema 不允许
   第三方插件增加字段（ui-theme 的 README 明确写了这一点）。
+- **说明文字档（caption）刻意低于 AA**，取 3.0（实测 3.49–3.60，官方 2.13）。
+  这是全插件唯一一处「已知低于 AA 且不打算修」的地方：宿主 12 处消费里 11 处是
+  分隔线与装饰，唯一的文字消费者是 11px 的菜单分组标签；提到 4.5 会与三级文字
+  齐平、这一档的层级随之消失。它不参与面板的「全部达标」统计（那项只算正文级），
+  理由写在 `readability.js` 的 `TEXT_TIERS` 上方。
 - 渲染验证台用的是**宿主真实样式表 + 复刻 DOM**，不是从运行中的应用抓的实时 DOM。
   见下节说明。
 
@@ -302,22 +383,24 @@ python verify/montage.py  # 拼成对比图
 
 ```
 src/client/index.js         客户端插件入口（apply / inject / name）
+src/client/color.js         颜色数学与 WCAG 求解器（解析、混合、对比度、求解）
+src/client/readability.js   可读性契约：谁压在谁上、最低多少（唯一真相来源）
 src/client/controller.js    外观控制器：令牌投射、属性投射、样式表装卸
-src/client/presets.js       设计令牌预设表（唯一的配色与几何真相来源）
+src/client/presets.js       设计令牌预设表（配色骨架 + 求解管线）
 src/client/panel.js         设置面板组件（React.createElement，无 JSX）
 src/client/state.js         状态读写与归一化
 src/client/locales.js       中英词典
 src/client/styles/*.css     六张结构层样式表
                             base / elevation / typography / task-list / safety / panel
 scripts/build.mjs           零依赖构建：拼接 + 包成 __ModuleLoader__ 脚本
-scripts/check.mjs           静态审计（20 项）
+scripts/check.mjs           静态审计（27 项，含 4704 次对比度断言）
 scripts/check-encoding.mjs  编码自检：找出被非 UTF-8 工具改写出乱码的源文件
 scripts/check-reproducible.mjs  可复现性：LF 与 CRLF 检出产物逐字节一致
 scripts/install.mjs         安全安装 / 卸载（默认 dry-run，先备份）
 scripts/host-tokens.mjs     生成宿主令牌基准表（宿主升级后手工跑）
 scripts/audit-caption-collision.mjs   全量排查侵入原生标题栏覆盖层的控件
 scripts/extract-compiled-css.mjs      从宿主编译产物抽取指定 hash 分组的规则
-tests/runtime.test.mjs      运行时集成测试（14 项）
+tests/runtime.test.mjs      运行时集成测试（27 项）
 verify/                     渲染验证台
 CHANGELOG.md                更新日志
 ```

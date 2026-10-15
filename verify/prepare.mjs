@@ -107,6 +107,9 @@ writeFileSync(join(BUILD, 'components.css'), componentParts.join('\n\n'))
 // -------------------------------------------------------------- 令牌快照
 
 const presets = await import(new URL('../src/client/presets.js', import.meta.url).href)
+const readability = await import(
+  new URL('../src/client/readability.js', import.meta.url).href
+)
 
 /** 验证台要渲染的状态：官方基准 + 每个预设各一组。 */
 const STATES = [
@@ -136,6 +139,45 @@ for (const state of STATES) {
   })
 }
 
+/**
+ * 可读性读数 —— 用**真实契约**算出，而不是在页面里另写一份对比度公式。
+ *
+ * 页面里出现「第二份实现」是漂移的来源：验证台显示的比值必须与构建期断言、
+ * 面板读数出自同一份代码，否则测试台会用它自己的算法证明自己是达标的。
+ * 官方基准那一档没有令牌层，因此不评估（显示为 null）。
+ */
+const readabilityReport = {}
+/** 语法着色画廊：每个预设一套真实 token 色，用于逐色对照。 */
+const syntaxGallery = []
+for (const state of STATES) {
+  const tokens = snapshot[state.id]
+  if (!tokens) {
+    readabilityReport[state.id] = null
+    continue
+  }
+  const report = readability.evaluateBoth(tokens)
+  readabilityReport[state.id] = {
+    worst: report.worstBody === null ? null : Number(report.worstBody.ratio.toFixed(2)),
+    worstId: report.worstBody === null ? null : report.worstBody.id,
+    worstLabel: report.worstBody === null ? null : report.worstBody.label,
+    floor: report.worst === null ? null : Number(report.worst.ratio.toFixed(2)),
+    total: report.total,
+    failing: report.failures.length
+  }
+  syntaxGallery.push({
+    id: state.id,
+    label: state.label,
+    tokens: Object.fromEntries(
+      readability.SYNTAX_TOKENS.map((name) => [
+        name,
+        { light: tokens[`--shiki-token-${name}`].light, dark: tokens[`--shiki-token-${name}`].dark }
+      ])
+    ),
+    code: { light: tokens['--dsw-alias-markdown-code-block'].light, dark: tokens['--dsw-alias-markdown-code-block'].dark },
+    plain: { light: tokens['--dsw-alias-label-primary'].light, dark: tokens['--dsw-alias-label-primary'].dark }
+  })
+}
+
 writeFileSync(
   join(BUILD, 'tokens.js'),
   `// 由 verify/prepare.mjs 生成：插件 buildTokens() 的真实输出快照，
@@ -147,6 +189,8 @@ window.DSHB_ATTRS = ${JSON.stringify(readControllerAttributes())}
 window.DSHB_VERSION = ${JSON.stringify(
     JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
   )}
+window.DSHB_READABILITY = ${JSON.stringify(readabilityReport)}
+window.DSHB_SYNTAX = ${JSON.stringify(syntaxGallery)}
 `
 )
 

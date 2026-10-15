@@ -1,0 +1,39 @@
+/*
+ * 界面美化 · Lumina —— 安全修正层。
+ *
+ * 这一层不放任何装饰。它只修一个宿主自身的问题：**页面控件被原生窗口按钮盖住，
+ * 用户点到的是「关闭程序」**。
+ *
+ * ## 问题
+ * Windows 上宿主用 Electron 的 `titleBarOverlay` 画最小化/最大化/关闭三个按钮。
+ * 它们不在 DOM 里 —— Chromium 把它们绘制在页面**之上**，占位约
+ * `top: 0..40px`、`right: 0..138px`（高度来自 host preload 写入的
+ * `--dsh-windows-titlebar-height: 40px`）。
+ *
+ * 而图片灯箱的关闭按钮是：
+ *
+ *   .close { position: fixed; top: 20px; right: 20px; width: 36px; height: 36px }
+ *   （宿主 ui-primitives 的 ImageLightbox.module.css）
+ *
+ * 它整个落在那三个原生按钮的下半部分里。因为原生覆盖层在上，点击被它截走 ——
+ * 用户点「图片的 ✕」，程序被关掉。这是可复现的误操作，不是观感问题。
+ *
+ * ## 修法
+ * 把灯箱关闭按钮挪到标题栏覆盖层**下方**。位移量不写死，而是用宿主自己发布的
+ * `--dsh-frame-overlay-top`：ui-layout 把它定义为
+ * `calc(--dsh-frame-top-clearance + 20px)`，而全屏时宿主会把它降回 20px ——
+ * 全屏下原生按钮本就不显示，关闭按钮自动回到原位，不需要插件再加一条全屏判断。
+ *
+ * ## 选择器
+ * 用与哈希无关的后缀匹配：编译后的类名形如 `_backdrop_1hos8_1` / `_close_1hos8_29`。
+ * 全应用只有一个 `_backdrop` 类（图片灯箱），因此
+ * `[class*='_backdrop'] [class*='_close_']` 唯一且稳定。匹配不到时静默降级 ——
+ * 宿主哪天自己修好了，这条规则自动失效，不会有副作用。
+ *
+ * `scripts/check.mjs` 会断言这条规则始终挂在 `[data-windows-titlebar]` 下并引用
+ * 宿主变量；`scripts/audit-caption-collision.mjs` 可在宿主升级后重新全量排查。
+ */
+
+html[data-windows-titlebar] body [class*='_backdrop'] [class*='_close_'] {
+  top: var(--dsh-frame-overlay-top, 60px);
+}

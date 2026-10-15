@@ -1,0 +1,64 @@
+{
+  "name": "dsh-ui-beautify",
+  "version": "1.0.0",
+  "description": "界面美化 · Lumina —— 为 DeepSeek Harness Web 界面提供主题化视觉增强：设计令牌重塑、层次与阴影、圆角与排版精修、克制动效，并提供可视化外观设置面板。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "theme",
+    "beautify"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/check.mjs",
+    "check:encoding": "node scripts/check-encoding.mjs",
+    "check:reproducible": "node scripts/check-reproducible.mjs",
+    "test": "node --test tests/runtime.test.mjs",
+    "verify": "node scripts/build.mjs && node scripts/check-encoding.mjs && node scripts/check.mjs && node scripts/check-reproducible.mjs && node --test tests/runtime.test.mjs"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    },
+    "manifestVersion": 1
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "src",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}

@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>DSH 界面美化 · 渲染验证台</title>
+    <!--
+      宿主 ui-theme 的真实令牌样式表（逐字节原样），顺序与宿主导入顺序一致。
+      页面里所有颜色、圆角、阴影、字号阶梯都来自这里。
+    -->
+    <link rel="stylesheet" href="build/tokens.css" />
+    <!-- 宿主 ui-primitives 的真实组件样式（类名已加前缀以避免跨文件串扰）。 -->
+    <link rel="stylesheet" href="build/components.css" />
+    <link rel="stylesheet" href="shell.css" />
+  </head>
+  <body>
+    <!-- ============================ 应用外壳 ============================ -->
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div class="brand-name">DeepSeek Harness</div>
+        </div>
+
+        <button class="cButton-button cButton-md cButton-primary" style="width: 100%">
+          ＋ 新建会话
+        </button>
+
+        <div class="sidebar-section">今天</div>
+
+        <div class="navitem navitem-active">
+          <span class="navitem-dot"></span>
+          <span>设计一个插件以美化界面</span>
+        </div>
+        <div class="navitem navitem-hover">
+          <span class="navitem-dot"></span>
+          <span>整理项目文档结构</span>
+        </div>
+        <div class="navitem">
+          <span class="navitem-dot"></span>
+          <span>服务端系统选型调研</span>
+        </div>
+        <div class="navitem">
+          <span class="navitem-dot"></span>
+          <span>自动化安装虚拟机</span>
+        </div>
+
+        <div class="sidebar-section">更早</div>
+        <div class="navitem">
+          <span class="navitem-dot"></span>
+          <span>桌面端启动失败排查</span>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="userrow">
+          <span class="avatar">DSH</span>
+          <span>desktop · deepseek</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="topbar">
+          <div class="topbar-title">设计一个插件以美化界面</div>
+          <div class="spacer"></div>
+          <button class="cButton-button cButton-sm cButton-ghost">分享</button>
+          <button class="cButton-button cButton-sm cButton-outline">···</button>
+        </div>
+
+        <div class="transcript">
+          <div class="bubble-row">
+            <div class="bubble">请设计一个插件以美化现版本的 DSH 界面 UI</div>
+          </div>
+
+          <div class="md">
+            <h2>设计方案：令牌重塑 + 结构精修</h2>
+            <p>
+              插件不改动宿主组件，而是通过 <code>ctx.theme.overrideTokens()</code>
+              把一套新的设计令牌叠到当前主题之上。
+            </p>
+            <ul>
+              <li>品牌位从近黑白切到强调色，界面第一次有了识别色</li>
+              <li>表面分级 + 冷调阴影，浅色下不再是一片纯白</li>
+              <li>圆角、行高、字距统一上调，长时间阅读更省力</li>
+            </ul>
+            <div class="codeblock">
+              <div class="codeblock-bar"><span>TypeScript</span><span>复制</span></div>
+              <pre><code>export function apply(ctx: ClientContext) {
+  const controller = createController({ theme: ctx.theme })
+  ctx.effect(() =&gt; controller.mount(), 'ui-beautify: 外观层')
+}</code></pre>
+            </div>
+            <h3>令牌覆盖的范围</h3>
+            <table>
+              <thead>
+                <tr><th>分组</th><th>令牌数</th><th>效果</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>画布与表面</td><td>14</td><td>层次分明</td></tr>
+                <tr><td>品牌与强调</td><td>12</td><td>识别色统一</td></tr>
+              </tbody>
+            </table>
+            <blockquote>
+              令牌是官方唯一支持的扩展点，因此卸载插件后界面能干净回到原样。
+            </blockquote>
+          </div>
+
+          <div class="toolcard">
+            <span>◆</span>
+            <span>已运行 <code>node scripts/check.mjs</code></span>
+            <span class="toolcard-status">通过</span>
+          </div>
+        </div>
+
+        <div class="composer">
+          <div class="composer-box">
+            <div class="composer-text">给 DeepSeek Harness 发送消息…</div>
+            <button class="cButton-button cButton-sm cButton-primary">发送</button>
+          </div>
+          <div class="composer-hint">Enter 发送 · Shift+Enter 换行</div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ============================ 浮层演示 ============================ -->
+    <div class="float-layer" id="overlay" hidden>
+      <div class="menu-anchor">
+        <div class="cMenu-root">
+          <div class="cMenuSurface-surface">
+            <div class="cMenuSurface-material"></div>
+            <div class="cMenu-list">
+              <div class="cMenu-label">会话操作</div>
+              <div class="cMenu-itemWrap">
+                <button class="cMenu-item">
+                  <span class="cMenu-itemIcon">✎</span>
+                  <span class="cMenu-itemLabel">重命名会话</span>
+                  <span class="cMenu-shortcut"><span class="cMenu-shortcutKeys">⌘R</span></span>
+                </button>
+              </div>
+              <div class="cMenu-itemWrap">
+                <button class="cMenu-item">
+                  <span class="cMenu-itemIcon">⧉</span>
+                  <span class="cMenu-itemLabel">复制会话 ID</span>
+                  <span class="cMenu-shortcut"><span class="cMenu-shortcutKeys">⌘⇧C</span></span>
+                </button>
+              </div>
+              <div class="cMenu-itemWrap">
+                <button class="cMenu-item cMenu-selectedFill">
+                  <span class="cMenu-itemIcon">◑</span>
+                  <span class="cMenu-itemLabel">外观美化</span>
+                  <span class="cMenu-check">✓</span>
+                </button>
+              </div>
+              <div class="cMenu-separator"></div>
+              <div class="cMenu-itemWrap">
+                <button class="cMenu-item cMenu-danger">
+                  <span class="cMenu-itemIcon">🗑</span>
+                  <span class="cMenu-itemLabel">删除会话</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tooltip-anchor">
+        <div class="cTooltip-bubble">
+          <span class="cTooltip-label">切换界面预设</span>
+        </div>
+      </div>
+
+      <div class="modal-anchor">
+        <div class="cModal-root">
+          <div class="cModal-mask"></div>
+          <div class="cModal-dialog">
+            <div class="cModal-header">
+              <h2 class="cModal-title">应用外观预设？</h2>
+              <button class="cModal-close">✕</button>
+            </div>
+            <p class="cModal-description">
+              该预设会覆盖配色、圆角与阴影令牌，并立即应用到当前界面。
+            </p>
+            <div class="cModal-footer">
+              <button class="cButton-button cButton-md cButton-ghost">取消</button>
+              <button class="cButton-button cButton-md cButton-primary">应用</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================= 插件设置面板 ========================= -->
+    <div id="panel-stage" hidden style="padding: 28px; max-width: 720px">
+      <div class="dshb-root">
+        <header class="dshb-head">
+          <div>
+            <h2 class="dshb-title">界面美化</h2>
+            <p class="dshb-subtitle">
+              为 DSH 换一套视觉语言：配色、层次、圆角与排版。改动即时生效。
+            </p>
+          </div>
+          <button class="dshb-switch" role="switch" aria-checked="true">
+            <span class="dshb-switch-thumb"></span>
+          </button>
+        </header>
+
+        <section class="dshb-body">
+          <div class="dshb-group">
+            <div class="dshb-group-title">预设风格</div>
+            <div class="dshb-cards">
+              <button class="dshb-card dshb-card-active">
+                <span class="dshb-card-dots">
+                  <span class="dshb-card-dot" style="background: #3f6fe0"></span>
+                  <span class="dshb-card-dot" style="background: #eef2f9"></span>
+                  <span class="dshb-card-dot" style="background: #0c1017"></span>
+                </span>
+                <span class="dshb-card-name">极光</span>
+                <span class="dshb-card-tagline">冷调分层 · 通透</span>
+              </button>
+              <button class="dshb-card">
+                <span class="dshb-card-dots">
+                  <span class="dshb-card-dot" style="background: #5b8cf7"></span>
+                  <span class="dshb-card-dot" style="background: #e9edf5"></span>
+                  <span class="dshb-card-dot" style="background: #080a10"></span>
+                </span>
+                <span class="dshb-card-name">午夜</span>
+                <span class="dshb-card-tagline">深邃高对比 · 夜航</span>
+              </button>
+              <button class="dshb-card">
+                <span class="dshb-card-dots">
+                  <span class="dshb-card-dot" style="background: #414a58"></span>
+                  <span class="dshb-card-dot" style="background: #f1f1f3"></span>
+                  <span class="dshb-card-dot" style="background: #131315"></span>
+                </span>
+                <span class="dshb-card-name">石墨</span>
+                <span class="dshb-card-tagline">中性克制 · 专注</span>
+              </button>
+              <button class="dshb-card">
+                <span class="dshb-card-dots">
+                  <span class="dshb-card-dot" style="background: #a8492a"></span>
+                  <span class="dshb-card-dot" style="background: #f3efe6"></span>
+                  <span class="dshb-card-dot" style="background: #17150f"></span>
+                </span>
+                <span class="dshb-card-name">纸感</span>
+                <span class="dshb-card-tagline">暖白墨色 · 阅读</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">强调色</div>
+              <div class="dshb-row-hint">用于主按钮、选中态与链接</div>
+            </div>
+            <div class="dshb-row-control">
+              <div class="dshb-swatches">
+                <button class="dshb-swatch dshb-swatch-active" style="--dshb-swatch-light: #3f6fe0; --dshb-swatch-dark: #7aaaff"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #6741d9; --dshb-swatch-dark: #a78bfa"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #0d8f85; --dshb-swatch-dark: #2dd4bf"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #b26a06; --dshb-swatch-dark: #fbbf24"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #c72e63; --dshb-swatch-dark: #f472b6"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #1f7a4d; --dshb-swatch-dark: #4ade80"></button>
+                <button class="dshb-swatch" style="--dshb-swatch-light: #414a58; --dshb-swatch-dark: #c3ccdb"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">圆角</div>
+              <div class="dshb-row-hint">影响卡片、输入框与弹层</div>
+            </div>
+            <div class="dshb-row-control">
+              <div class="dshb-segmented">
+                <button class="dshb-segment dshb-segment-active">紧凑</button>
+                <button class="dshb-segment">标准</button>
+                <button class="dshb-segment">圆润</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">氛围光</div>
+              <div class="dshb-row-hint">在侧栏叠一层低透明度光斑</div>
+            </div>
+            <div class="dshb-row-control">
+              <button class="dshb-switch" role="switch" aria-checked="true">
+                <span class="dshb-switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">内容精修</div>
+              <div class="dshb-row-hint">行高、字距、代码块与表格细节</div>
+            </div>
+            <div class="dshb-row-control">
+              <button class="dshb-switch" role="switch" aria-checked="true">
+                <span class="dshb-switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dshb-row">
+            <div class="dshb-row-text">
+              <div class="dshb-row-title">毛玻璃</div>
+              <div class="dshb-row-hint">关闭后菜单改为近乎不透明的实色</div>
+            </div>
+            <div class="dshb-row-control">
+              <button class="dshb-switch" role="switch" aria-checked="false">
+                <span class="dshb-switch-thumb"></span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <footer class="dshb-foot">
+          <span>偏好保存在本机浏览器，不写入会话配置。</span>
+          <button class="dshb-reset">恢复默认</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="caption" id="caption"></div>
+
+    <!-- ======================= 圆角画廊（三档并排） =======================
+         每一列把该档的 --dsw-radius-* 设在列根元素上（自定义属性向下继承），
+         再用宿主 ui-primitives 的真实组件样式渲染同一组控件。
+
+         画廊刻意混入两个**不应该变化**的对照项（标签胶囊、开关），它们用的是
+         字面量 999px + corner-shape: round，不受圆角令牌影响；如果它们跟着变，
+         说明选择器写错了。
+
+         关键观察项是 32px 高的输入框：它的 md 半径一旦接近 16px 就会塌成胶囊。
+    -->
+    <div id="radius-stage" hidden></div>
+
+    <!-- ======================= 灯箱 × 原生标题栏覆盖层 =======================
+         用宿主 ui-primitives 的真实 ImageLightbox 样式搭出灯箱；右上角再放一个
+         **模拟**的原生标题栏覆盖层占位块。
+
+         为什么要模拟：那三个按钮由 Electron 的 titleBarOverlay 交给 Chromium 绘制，
+         根本不在 DOM 里，也没有任何 CSS 能选中它们 —— 浏览器验证台里当然也不会有。
+         但碰撞是纯几何问题：覆盖层占 top:0..40px / right:0..138px 且绘制在页面之上，
+         灯箱关闭按钮原本在 top:20px / right:20px。把这块矩形画出来，
+         重叠与否一眼可判。
+
+         占位块的底色与字形色刻意取自宿主 preload 实际读取的两个令牌
+         （--dsw-specific-sidebar-fill / --dsw-alias-label-primary），
+         因此它和真机上的观感一致。
+    -->
+    <div id="lightbox-stage" hidden>
+      <div class="caption-sim" aria-hidden="true">
+        <span class="caption-sim-tag">模拟原生覆盖层</span>
+        <span class="caption-sim-btn">&#x2013;</span>
+        <span class="caption-sim-btn">&#x25A2;</span>
+        <span class="caption-sim-btn">&#x2715;</span>
+      </div>
+
+      <!-- 类名用的是宿主编译产物里的真实名字（_backdrop_1hos8_1 / _close_1hos8_29），
+           不是源码级的 .backdrop / .close —— 安全修正层的选择器针对的是编译后的
+           命名约定，用源码级名字渲染会「两边一样」而验证不到任何东西。 -->
+      <div class="_backdrop_1hos8_1">
+        <div class="_mask_1hos8_11"></div>
+        <div class="_image_1hos8_18 rg-lightbox-art"></div>
+        <button class="_close_1hos8_29" aria-label="关闭预览">&#x2715;</button>
+      </div>
+    </div>
+
+    <!-- ===================== 真实窗口框架（圆角复现） =====================
+         严格按宿主 ui-layout 的结构与真实哈希类名搭：
+           html[data-windows-titlebar]
+             > .BynINW_frame           背景 = 侧栏填充，padding-top = 标题栏高度
+               > .BynINW_frame:before  标题栏拖拽带
+               > .BynINW_sidebarCol    左列
+               > .BynINW_centerCol     背景 = 画布，border-radius: 16px 0 0 0
+         中心列左上角那个圆角会把 frame 的底色（以及任何加在 frame 上的
+         background-image）露出来 —— 这正是要复现的圆角问题所在。
+    -->
+    <div id="frame-stage" hidden>
+      <div class="BynINW_frame" style="grid-template-columns: 236px minmax(0, 1fr)">
+        <aside class="BynINW_sidebarCol">
+          <div class="frame-sidebar">
+            <div class="brand">
+              <div class="brand-mark"></div>
+              <div class="brand-name">DeepSeek Harness</div>
+            </div>
+            <div class="navitem navitem-active">
+              <span class="navitem-dot"></span><span>DSH 界面UI美化插件设计</span>
+            </div>
+            <div class="navitem"><span class="navitem-dot"></span><span>整理项目文档结构</span></div>
+          </div>
+        </aside>
+        <main class="BynINW_centerCol">
+          <div class="conv">
+            <div class="conv-title-row">
+              <span class="conv-avatar">DSH</span>
+              <span class="conv-title">DSH 界面UI美化插件设计</span>
+              <span class="conv-meta">◐ 3</span>
+            </div>
+            <div class="conv-tabs">
+              <span class="conv-tab conv-tab-active">对话</span>
+              <span class="conv-tab">轨迹</span>
+            </div>
+          </div>
+          <div class="conv-body">
+            <div class="md">
+              <h2>设计方案：令牌重塑 + 结构精修</h2>
+              <p>插件不改动宿主组件，而是通过 design token 覆盖层重塑界面。</p>
+              <div class="card">
+                <div style="font-weight: 500; margin-bottom: 6px">外观偏好</div>
+                <div style="color: var(--dsw-alias-label-tertiary); font-size: 12px">
+                  预设 · 强调色 · 圆角 · 氛围光 · 内容精修
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- 插件 buildTokens() 的真实输出快照，以及插件自己的四张样式表 -->
+    <script src="build/tokens.js"></script>
+    <script src="build/plugin-styles.js"></script>
+    <script>
+      /**
+       * 引导：把「宿主 apply() 会做的事」按同样顺序做一遍。
+       *
+       * 宿主 ui-layout 的 ThemePresenter.apply 是这样落地的：
+       *   1. documentElement.style.colorScheme = scheme
+       *   2. body[data-ds-dark-theme] 按需增删
+       *   3. 对 snapshot.active.tokens 逐条 body.style.setProperty(name, value)
+       *
+       * 插件通过 ctx.theme.overrideTokens 把自己的令牌折进 snapshot，
+       * 因此这里直接把 tokens.js 里的快照写到 body 上，效果与真机一致。
+       */
+      const params = new URLSearchParams(location.search)
+      const stateId = params.get('state') || 'official'
+      const mode = params.get('mode') === 'dark' ? 'dark' : 'light'
+      const view = params.get('view') || 'shell'
+
+      const tokens = (window.DSHB_TOKENS || {})[stateId]
+      const label = (window.DSHB_STATES || []).find((s) => s.id === stateId)?.label || stateId
+
+      // 1. 配色方案
+      document.documentElement.style.colorScheme = mode
+      if (mode === 'dark') document.body.setAttribute('data-ds-dark-theme', '')
+      else document.body.removeAttribute('data-ds-dark-theme')
+
+      if (tokens) {
+        // 2. 令牌（官方原版状态不做任何覆盖，作为对照基线）
+        for (const [name, value] of Object.entries(tokens)) {
+          document.body.style.setProperty(name, value[mode])
+        }
+        // 3. 结构层样式表 + 状态属性（插件 controller.mount() 的真实行为）
+        document.documentElement.setAttribute('data-dshb-enabled', 'on')
+        document.documentElement.setAttribute('data-dshb-ambient', 'on')
+        document.documentElement.setAttribute('data-dshb-motion', 'on')
+        document.documentElement.setAttribute('data-dshb-typography', 'on')
+        document.documentElement.setAttribute('data-dshb-preset', params.get('preset') || 'aurora')
+        document.documentElement.setAttribute('data-dshb-radius', 'standard')
+        for (const { name, css } of window.DSHB_STYLES || []) {
+          // 回归夹具：`?bug=caption-overlap` 时抽掉安全修正层，
+          // 还原成「灯箱关闭按钮落进原生按钮占位」的原始状态。
+          if (params.get('bug') === 'caption-overlap' && name === 'safety') continue
+          const tag = document.createElement('style')
+          tag.dataset.pluginCss = 'dsh-ui-beautify/' + name
+          tag.textContent = css
+          document.head.appendChild(tag)
+        }
+      }
+
+      /*
+       * 回归夹具：`?bug=ambient-frame` 会重新套上「氛围光也挂在窗口框架上」这条
+       * 已经被删掉的规则，用来在同一轮渲染里产出可复现的缺陷对照图。
+       *
+       * 之所以做成夹具而不是保留旧截图：裁剪框是按像素硬编码的，任何一次
+       * 视口或标题栏高度的变化都会让新旧截图的取景对不上，对照就失去意义。
+       * 夹具保证「复现 / 修复后」两张图除这一条规则外完全同源。
+       */
+      if (params.get('bug') === 'ambient-frame') {
+        const tag = document.createElement('style')
+        tag.dataset.pluginCss = 'dsh-ui-beautify/REGRESSION-FIXTURE'
+        tag.textContent = `
+          html[data-dshb-ambient='on'] body [class*='_frame'] {
+            background-image:
+              radial-gradient(120% 55% at 0% 0%, var(--dshb-ambient-a), transparent 70%),
+              radial-gradient(120% 50% at 100% 100%, var(--dshb-ambient-b), transparent 72%);
+          }`
+        document.head.appendChild(tag)
+      }
+
+      // 视图切换
+      if (view === 'overlay') document.getElementById('overlay').hidden = false
+      if (view === 'panel') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('panel-stage').hidden = false
+      }
+      if (view === 'frame') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('frame-stage').hidden = false
+        // Windows 标题栏模式：这两处是宿主在真实窗口里设置的状态。
+        // 40px 是宿主 preload 实际写入的值（--dsh-windows-titlebar-height: 40px）。
+        document.documentElement.setAttribute('data-windows-titlebar', '')
+        document.documentElement.style.setProperty('--dsh-windows-titlebar-height', '40px')
+      }
+      if (view === 'radius') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('radius-stage').hidden = false
+        document.getElementById('caption').textContent =
+          '圆角画廊 · 宿主真实组件 · ' + (mode === 'dark' ? '深色' : '浅色')
+        renderRadiusGallery()
+      }
+      if (view === 'lightbox') {
+        document.querySelector('.app').style.display = 'none'
+        document.getElementById('lightbox-stage').hidden = false
+        document.documentElement.setAttribute('data-windows-titlebar', '')
+        document.documentElement.style.setProperty('--dsh-windows-titlebar-height', '40px')
+        document.getElementById('caption').textContent =
+          '图片灯箱 × 原生标题栏覆盖层 · ' + (mode === 'dark' ? '深色' : '浅色')
+      }
+
+      /** 渲染三档圆角并排的画廊。每列的令牌只作用在自己的子树上。 */
+      function renderRadiusGallery() {
+        const stage = document.getElementById('radius-stage')
+        const tiers = window.DSHB_RADIUS_TIERS || []
+        const TOKEN = {
+          xs: '--dsw-radius-xs',
+          sm: '--dsw-radius-sm',
+          md: '--dsw-radius-md',
+          lg: '--dsw-radius-lg',
+          xl: '--dsw-radius-xl',
+          panel: '--dsw-radius-panel'
+        }
+        /** 一行「标注 + 控件」。 */
+        const item = (label, node) => {
+          const wrap = document.createElement('div')
+          wrap.className = 'rg-item'
+          const tag = document.createElement('span')
+          tag.className = 'rg-label'
+          tag.textContent = label
+          wrap.append(tag, node)
+          return wrap
+        }
+        /** 用 HTML 字符串快速构造一个元素。 */
+        const el = (html) => {
+          const t = document.createElement('template')
+          t.innerHTML = html.trim()
+          return t.content.firstElementChild
+        }
+
+        for (const tier of tiers) {
+          const col = document.createElement('div')
+          col.className = 'rg-col'
+          for (const [key, name] of Object.entries(TOKEN)) {
+            col.style.setProperty(name, `${tier.radii[key]}px`)
+          }
+          col.append(
+            el(
+              `<div class="rg-head">${tier.name}<span>xs ${tier.radii.xs} · sm ${tier.radii.sm} · md ${tier.radii.md} · lg ${tier.radii.lg} · xl ${tier.radii.xl} · panel ${tier.radii.panel}</span></div>`
+            ),
+            item(
+              `输入框 32px · md = ${tier.radii.md}`,
+              el(
+                `<div class="cInput-wrap" style="width:100%"><input class="cInput-input" placeholder="搜索会话…"></div>`
+              )
+            ),
+            item(
+              `主按钮 36px · md = ${tier.radii.md}`,
+              el(
+                `<button class="cButton-button cButton-md cButton-primary">发送</button>`
+              )
+            ),
+            item(
+              `小按钮 28px · sm = ${tier.radii.sm}`,
+              el(
+                `<button class="cButton-button cButton-sm cButton-outline">分享</button>`
+              )
+            ),
+            item(
+              `菜单行 34px · md = ${tier.radii.md}`,
+              el(
+                `<div class="cMenu-list" style="position:static;box-shadow:none;padding:0;min-width:0;width:100%"><div class="cMenu-itemWrap"><button class="cMenu-item">重命名会话</button></div></div>`
+              )
+            ),
+            item(
+              `紧凑菜单行 24px · sm = ${tier.radii.sm}`,
+              el(
+                `<div class="cMenu-list cMenu-compactList" style="position:static;box-shadow:none;padding:0;min-width:0;width:100%"><div class="cMenu-itemWrap"><button class="cMenu-item">外观美化</button></div></div>`
+              )
+            ),
+            item(
+              '标签胶囊 · 字面量 999px（对照组，不应变化）',
+              el(`<span class="cTag-tag" data-tone="neutral">已安装</span>`)
+            ),
+            item(
+              '开关 20px · 字面量 999px + round（对照组）',
+              el(
+                `<button class="cSwitch-switch" role="switch" aria-checked="true" style="position:relative"><span class="cSwitch-thumb"></span></button>`
+              )
+            ),
+            item(
+              `代码卡片 · lg = ${tier.radii.lg}`,
+              el(
+                `<div class="cCodeCard-card" style="margin:0;width:100%"><div class="cCodeCard-header"><span class="cCodeCard-language">TypeScript</span></div><div class="cCodeCard-body" style="padding:8px 18px 12px"><code>apply(ctx)</code></div></div>`
+              )
+            ),
+            item(
+              `用户气泡 · xl = ${tier.radii.xl}`,
+              el(`<div class="rg-bubble">请设计一个插件以美化现版本的 DSH 界面 UI</div>`)
+            ),
+            item(
+              `输入区卡片 · panel = ${tier.radii.panel}`,
+              el(`<div class="rg-composer">给 DeepSeek Harness 发送消息…</div>`)
+            ),
+            item(
+              `对话框 · panel = ${tier.radii.panel}`,
+              el(
+                `<div class="cModal-dialog" style="width:100%;animation:none"><div class="cModal-header"><h2 class="cModal-title">应用外观预设？</h2></div><p class="cModal-description" style="padding:0 24px;margin:0">该预设会覆盖配色与圆角令牌。</p></div>`
+              )
+            )
+          )
+          stage.append(col)
+        }
+      }
+
+      document.getElementById('caption').textContent =
+        `${stateId === 'official' ? '官方原版令牌' : '插件令牌：' + label} · ${mode === 'dark' ? '深色' : '浅色'}`
+
+      /*
+       * 诊断模式：把若干令牌的「元素上实际解析到的值」写进 DOM。
+       * 配合 chrome --dump-dom 使用，可以在没有交互式 devtools 的情况下
+       * 确认令牌到底有没有落到控件上（外观调试最容易卡在「看不见的静默失效」）。
+       */
+      if (params.get('diag')) {
+        const names = [
+          '--dsw-alias-brand-primary',
+          '--dsw-alias-button-primary-fill',
+          '--dsw-alias-bg-base',
+          '--dsw-specific-bubble',
+          '--dsw-alias-switch-thumb',
+          '--dsw-radius-md',
+          '--dsw-elevation-panel'
+        ]
+        const bodyStyle = getComputedStyle(document.body)
+        const button = document.querySelector('.cButton-primary')
+        const buttonStyle = button ? getComputedStyle(button) : null
+        const pre = document.createElement('pre')
+        pre.id = 'diag'
+        pre.textContent = [
+          'inline-body-primary=' + document.body.style.getPropertyValue('--dsw-alias-brand-primary'),
+          'body-computed-primary=' + bodyStyle.getPropertyValue('--dsw-alias-brand-primary'),
+          'button-bg=' + (buttonStyle ? buttonStyle.backgroundColor : 'n/a'),
+          'button-radius=' + (buttonStyle ? buttonStyle.borderRadius : 'n/a'),
+          'style-tags=' + document.querySelectorAll('style[data-plugin-css]').length,
+          ...names.map((n) => `${n}=${bodyStyle.getPropertyValue(n)}`)
+        ].join('\n')
+        document.body.appendChild(pre)
+      }
+    </script>
+  </body>
+</html>

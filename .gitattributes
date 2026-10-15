@@ -1,0 +1,15 @@
+# 统一换行符：仓库内一律 LF，工作区也检出 LF。
+#
+# 这不是洁癖。scripts/build.mjs 用行锚定正则（^import ... $、^export ...）解析模块，
+# 而 Windows 上 Git 默认的 core.autocrlf=true 会把工作区检出成 CRLF ——
+# 行尾多出的 \r 会让 `[ \t]*$` 匹配不上，构建在别人机器上直接失败。
+# 显式声明 eol=lf 之后，本机与任何克隆的行为一致。
+* text=auto eol=lf
+
+# 明确标记二进制，避免 Git 对图片做换行转换或生成无意义的文本 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff2 binary

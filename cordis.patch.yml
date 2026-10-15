@@ -1,0 +1,7 @@
+# dsh-ui-beautify bundle patch —— 把「界面美化」插入 profile 的层栈。
+#
+# 该条目只提供宿主侧的空壳（lib/index.js）；真正的界面改造成活在浏览器侧，
+# 由 package.json 的 dsh.client 声明加载，二者通过同一个包名 id 关联。
+- insert:
+    - id: ui-beautify
+      name: 'dsh-ui-beautify'

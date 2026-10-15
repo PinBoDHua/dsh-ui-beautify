@@ -1,0 +1,25 @@
+# 依赖（本插件无运行时依赖，这里只为防手滑）
+node_modules/
+
+# ---------------------------------------------------------------- 验证台
+#
+# 宿主样式副本：从本地 DSH 安装里抽出来的第三方样式表，仅用于离线渲染验证。
+# 不随仓库分发 —— 获取方式见 verify/README.md。
+verify/host-src/
+
+# 由 prepare.mjs 生成的中间产物
+verify/build/
+
+# 无头浏览器的临时配置目录
+verify/.chrome-profile/
+
+# 逐张截图体积大且可随时重新生成，只保留文档引用的对比图。
+# （保持 verify/out 目录本身不被排除，下面的反向规则才生效。）
+verify/out/*
+!verify/out/compare-*.png
+!verify/out/presets-*.png
+!verify/out/radius-*.png
+
+# ---------------------------------------------------------------- 系统
+.DS_Store
+Thumbs.db

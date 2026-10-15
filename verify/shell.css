@@ -1,0 +1,695 @@
+/*
+ * 验证台外壳样式 —— DSH 外观复刻页的布局部分。
+ *
+ * 只写「结构」：栅格、间距、滚动。所有颜色、圆角、阴影一律读宿主令牌
+ * （--dsw-*），因此同一份标记在「官方令牌」与「插件令牌」两种状态下会呈现
+ * 出真实差异 —— 这正是本验证台要展示的东西。
+ *
+ * 视觉身份很强的控件（按钮、输入框、菜单材质、弹窗、开关、分段控件、标签、
+ * 提示气泡、代码卡片）直接用宿主 ui-primitives 的真实样式类，
+ * 见 build/components.css。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------ 应用框架 */
+
+.app {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  height: 100vh;
+  background: var(--dsw-alias-bg-base);
+}
+
+/* ---------------------------------------------------------------- 侧栏 */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 0.5px solid var(--dsw-alias-border-l3);
+  overflow: hidden;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 8px;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--dsw-alias-brand-primary);
+  box-shadow: var(--dsw-elevation-panel);
+}
+
+.brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-section {
+  padding: 10px 6px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--dsw-alias-label-caption);
+  text-transform: uppercase;
+}
+
+.navitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navitem-hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.navitem-active {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.navitem-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-idle-primary);
+}
+
+.navitem-active .navitem-dot {
+  background: var(--dsw-specific-sidebar-nav-item-active-accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.userrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+}
+
+/* ------------------------------------------------------------ 主内容列 */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.topbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px 26px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 用户气泡 —— 宿主用 --dsw-specific-bubble 系列令牌 */
+.bubble-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-bubble);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 助手 Markdown —— 字号阶梯与颜色全部来自宿主 Markdown 令牌 */
+.md {
+  font: var(--dsw-font-markdown-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.md > * {
+  margin: 0 0 10px;
+}
+
+.md h2 {
+  font: var(--dsw-font-markdown-h2);
+  margin: 0 0 8px;
+}
+
+.md h3 {
+  font: var(--dsw-font-markdown-h3);
+  margin: 0 0 8px;
+}
+
+.md p,
+.md li {
+  font: var(--dsw-font-markdown-base);
+}
+
+.md ul {
+  padding-inline-start: 20px;
+}
+
+.md code {
+  font-family: var(--ds-font-family-code);
+  font-size: 0.92em;
+  background: var(--dsw-alias-markdown-inline-code);
+  border-radius: var(--dsw-radius-xs);
+}
+
+.md pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  overflow: hidden;
+  background: var(--dsw-alias-markdown-code-block);
+  font-family: var(--ds-font-family-code);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.md pre code {
+  background: none;
+  padding: 0;
+}
+
+.md blockquote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 12px;
+  border-inline-start: 3px solid var(--dsw-alias-border-l4);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.md table {
+  border-collapse: collapse;
+  width: 100%;
+  font: var(--dsw-font-markdown-base);
+}
+
+.md th,
+.md td {
+  padding: 5px 9px;
+  text-align: left;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.md th {
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 600;
+}
+
+.md a {
+  color: var(--dsw-alias-link);
+  text-decoration: underline;
+}
+
+/* 代码块顶栏（宿主用 markdown-code-block-banner） */
+.codeblock {
+  border-radius: var(--dsw-radius-md);
+  overflow: hidden;
+  background: var(--dsw-alias-markdown-code-block);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.codeblock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-markdown-code-block-banner);
+}
+
+.codeblock pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* 工具调用卡片 —— 用宿主高度令牌做出层次 */
+.toolcard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.toolcard-status {
+  margin-inline-start: auto;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 11px;
+}
+
+/* 设置卡片 —— 宿主 base.css 定义了 settings-card 令牌 */
+.card {
+  padding: 14px 16px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-layer-2));
+  border: 1px solid var(--dsw-alias-settings-card-stroke, var(--dsw-alias-border-l4));
+}
+
+/* ---------------------------------------------------------------- 输入区 */
+
+.composer {
+  flex: none;
+  padding: 10px 26px 16px;
+}
+
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 9px 10px 9px 13px;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-input-major);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  box-shadow: var(--dsw-elevation-soft);
+}
+
+.composer-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-dimmed);
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: 22px;
+}
+
+.composer-hint {
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ 浮层与弹层 */
+
+.float-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.float-layer > * {
+  pointer-events: auto;
+}
+
+.menu-anchor {
+  position: fixed;
+  left: 292px;
+  top: 84px;
+  width: 244px;
+}
+
+.modal-anchor {
+  position: fixed;
+  left: 648px;
+  top: 300px;
+  width: 420px;
+}
+
+.tooltip-anchor {
+  position: fixed;
+  left: 880px;
+  top: 58px;
+}
+
+/* 无头截图的虚拟时间会把宿主的入场动画冻结在起始帧（opacity: 0），
+   弹窗看上去是透明的；过渡同理，会让颜色停在中间态。
+   静态截图本来也证明不了动效，这里统一把动画与过渡的时长归零并保留终态。 */
+*,
+*::before,
+*::after {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+  animation-fill-mode: both !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+/* 验证台自己的小标注（不属于 DSH 外观） */
+.caption {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--ds-font-family-code);
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+/* ------------------------------------------------- 宿主组件的接线微调
+ * 宿主把「定位/圆角」放在 MenuSurface，把「内边距/阴影」放在 Menu。
+ * 复刻页面把两者套起来用，需要把 Menu 卡片自身的绝对定位让给外层容器，
+ * 否则它会以 .cMenu-root 为参照再偏移一次 100%。
+ */
+.menu-anchor .cMenu-root {
+  display: block;
+}
+
+.menu-anchor .cMenuSurface-surface {
+  display: block;
+}
+
+.menu-anchor .cMenu-list {
+  position: static;
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+}
+
+/* 氛围光：插件把它挂在宿主的 `[class*='_sidebarCol']` 上（见
+   src/client/styles/base.css）。复刻页面用的是自己的 .sidebar 类名，
+   因此在这里**逐字复述**同一条规则，让验证台能展示出氛围光的实际效果。
+   改了插件那边记得同步这里，否则验证台展示的就不是插件的真实行为。
+   （frame 视图不需要这条：那边的类名就是宿主的真实类名，插件样式直接生效。） */
+html[data-dshb-ambient='on'] .sidebar {
+  background-image: radial-gradient(
+      120% 55% at 0% 0%,
+      var(--dshb-ambient-a),
+      var(--dshb-ambient-a-fade) 70%
+    ),
+    radial-gradient(
+      120% 50% at 100% 100%,
+      var(--dshb-ambient-b),
+      var(--dshb-ambient-b-fade) 72%
+    );
+}
+
+/* ------------------------------------------------------------ 窗口框架视图 */
+
+#frame-stage {
+  height: 100vh;
+}
+
+.frame-sidebar {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+/* 会话头部：标题行 + 对话/轨迹 标签页 */
+.conv {
+  flex: none;
+  padding: 10px 20px 0;
+}
+
+.conv-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+.conv-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 9px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+
+.conv-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.conv-meta {
+  margin-inline-start: auto;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.conv-tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.conv-tab {
+  padding-bottom: 7px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.conv-tab-active {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 0 var(--dsw-alias-state-business-primary);
+}
+
+.conv-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 16px 20px;
+}
+
+.conv-body .card {
+  margin-top: 10px;
+}
+
+/* ---------------------------------------------------------- 圆角画廊视图 */
+
+#radius-stage {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  padding: 18px;
+  align-items: start;
+}
+
+.rg-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.rg-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 14px;
+  font-weight: 600;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.rg-head span {
+  font-size: 10.5px;
+  font-weight: 400;
+  font-family: var(--ds-font-family-code);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rg-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rg-label {
+  font-size: 10.5px;
+  font-family: var(--ds-font-family-code);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rg-item > :not(.rg-label) {
+  align-self: flex-start;
+}
+
+.rg-item > .cInput-wrap,
+.rg-item > .cMenu-list,
+.rg-item > .cCodeCard-card,
+.rg-item > .cModal-dialog,
+.rg-item > .rg-bubble,
+.rg-item > .rg-composer {
+  align-self: stretch;
+}
+
+/* 用户气泡：与宿主 MessageItem.module.css 的 .bubble 同形 */
+.rg-bubble {
+  padding: 8px 12px;
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-specific-bubble);
+  font-size: 13px;
+}
+
+/* 输入区卡片：与宿主 InputBar.module.css 的 .card 同形 */
+.rg-composer {
+  padding: 12px 14px;
+  border-radius: var(--dsw-radius-panel);
+  background: var(--dsw-specific-input-major);
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  box-shadow: var(--dsw-elevation-soft);
+  color: var(--dsw-alias-label-dimmed);
+  font-size: 13px;
+}
+
+/* ------------------------------------------- 原生标题栏覆盖层占位（模拟） */
+
+/*
+ * 真机上这三个按钮由 Electron 的 titleBarOverlay 交给 Chromium 绘制：
+ * 不在 DOM 里，没有任何选择器能命中，也**没有任何页面内容能盖在它上面**。
+ * 验证台里用一块同尺寸同底色的占位块表达它的位置与层级。
+ *
+ * 尺寸依据：高度 = --dsh-windows-titlebar-height（宿主 preload 写 40px）；
+ * 宽度 138px 是 Windows 11 三个 46px 按钮的合计。底色与字形色取自宿主 preload
+ * 实际读取的那两个令牌，因此与真机观感一致。
+ */
+.caption-sim {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2000; /* 高于灯箱的 z-index: 1000 —— 真机上原生层也在页面之上 */
+  display: flex;
+  align-items: center;
+  height: var(--dsh-windows-titlebar-height, 40px);
+  width: 138px;
+  background: var(--dsw-specific-sidebar-fill);
+  color: var(--dsw-alias-label-primary);
+  outline: 1px dashed #e5484d;
+  outline-offset: -1px;
+  pointer-events: none;
+}
+
+.caption-sim-btn {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* 说明标签：验证台自己的标注，不属于 DSH 外观 */
+.caption-sim-tag {
+  position: absolute;
+  top: calc(var(--dsh-windows-titlebar-height, 40px) + 4px);
+  right: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--ds-font-family-code);
+  white-space: nowrap;
+  color: #fff;
+  background: #e5484d;
+}
+
+/* 灯箱里的占位「图片」 */
+.rg-lightbox-art {
+  width: min(58vw, 520px);
+  height: 300px;
+  background: linear-gradient(135deg, #93b4f5, #c9d9fb 45%, #eef2f9);
+}
+
+body[data-ds-dark-theme] .rg-lightbox-art {
+  background: linear-gradient(135deg, #2a3a5c, #1b2230 45%, #111721);
+}
+
+/* 弹窗遮罩在验证台里去掉，避免它盖住要对比的界面 —— 只保留卡片本身，
+   仍按宿主的固定定位规则浮在右下角。 */
+.modal-anchor .cModal-root {
+  position: static;
+  padding: 0;
+  display: block;
+}
+
+.modal-anchor .cModal-mask {
+  display: none;
+}
+
+.modal-anchor .cModal-dialog {
+  width: 100%;
+}

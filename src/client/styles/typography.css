@@ -1,0 +1,90 @@
+/*
+ * 界面美化 · Lumina —— 内容排版精修层（可用 data-dshb-typography 整体关闭）。
+ *
+ * 这一层处理令牌表达不了的东西：字形平滑、等宽数字、代码块与引用块的细节。
+ * 全部使用元素选择器 —— 它们由宿主 Markdown 渲染器产出，与 CSS Module 哈希无关，
+ * 因此跨版本稳定；代价是无法区分「会话里的表格」与「插件面板里的表格」，
+ * 这对视觉一致性而言反而是好事。
+ *
+ * 打开/关闭由 <html data-dshb-typography="on|off"> 控制。
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. 字形渲染
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-typography='on'] body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 中文正文在 system-ui 下字距偏挤；0.01em 是几乎察觉不到、但整页读起来更松的量 */
+html[data-dshb-typography='on'] body :is(p, li, dd, dt, td, th) {
+  letter-spacing: 0.01em;
+}
+
+/* 表格、代码、时间戳里的数字等宽，列才对得齐 */
+html[data-dshb-typography='on'] body :is(table, code, kbd, samp, pre) {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv05' 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. 代码
+ * ------------------------------------------------------------------ */
+
+/* 行内代码：官方只给底色，这里补一根极淡描边，让它从正文里「浮」起来 */
+html body :not(pre) > code {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-xs);
+  padding: 0.1em 0.34em;
+}
+
+/* 代码块：圆角 + 描边 + 顶部一道极淡高光，避免大面积实色显得扁平 */
+html body pre {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  box-shadow: inset 0 1px 0 0 var(--dsw-alias-border-l1);
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. 引用与分隔
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-typography='on'] body blockquote {
+  border-inline-start: 3px solid var(--dsw-alias-state-business-primary);
+  border-radius: 0 var(--dsw-radius-sm) var(--dsw-radius-sm) 0;
+  padding-inline-start: 0.85em;
+}
+
+html[data-dshb-typography='on'] body hr {
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. 表格
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-typography='on'] body th {
+  background-color: var(--dsw-alias-markdown-code-block-banner);
+}
+
+html[data-dshb-typography='on'] body table {
+  border-radius: var(--dsw-radius-sm);
+  overflow: clip;
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. 链接与图片
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-typography='on'] body a {
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 0.06em;
+}
+
+html[data-dshb-typography='on'] body :is(img, video) {
+  border-radius: var(--dsw-radius-sm);
+}

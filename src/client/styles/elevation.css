@@ -1,0 +1,34 @@
+/*
+ * 界面美化 · Lumina —— 高度（elevation）令牌重组层。
+ *
+ * ## 为什么这一层必须存在
+ * 宿主 gradient-shadow-text.css 把 `--dsw-elevation-*` 声明在 `body, body *` 上 ——
+ * 也就是**每一个元素都自带一份声明**。插件通过 ctx.theme.overrideTokens 拿到的
+ * 是 body 上的行内样式，行内值只能被继承；元素自带的声明优先于继承，所以行内
+ * 覆盖对这一族令牌完全无效（这是宿主令牌体系里唯一一处这样的例外）。
+ *
+ * ## 怎么解
+ * 插件改为交出「原语」：--dshb-elev-stroke-color / --dshb-elev-panel 等，
+ * 它们没有第二个声明点，行内值可正常继承到所有后代；再由本表把这些原语组合成
+ * 宿主令牌。选择器写成 `html body` / `html body *`，特异性严格高于宿主的
+ * `body` / `body *`，因此不依赖样式表顺序、也不需要 !important。
+ */
+
+html body,
+html body * {
+  --dsw-elevation-stroke: 0 0 0 0.5px var(--dshb-elev-stroke-color);
+  --dsw-elevation-panel: var(--dsw-elevation-stroke), var(--dshb-elev-panel);
+  --dsw-elevation-prominent: var(--dsw-elevation-stroke),
+    var(--dshb-elev-prominent);
+  --dsw-elevation-soft: var(--dsw-elevation-stroke), var(--dshb-elev-soft);
+}
+
+/*
+ * 宿主在深色模式下给菜单材质换了一根更亮的描边色。官方值来自 border-l3，
+ * 这里改用本预设的 stroke 原语，让菜单描边与其余浮层保持同一支笔。
+ * 选择器特异性 (0,0,2,2) 高于宿主的 (0,0,2,1)。
+ */
+html body[data-ds-dark-theme] [data-menu-material],
+html body [data-menu-material] {
+  --dsw-elevation-stroke-color: var(--dshb-elev-stroke-color);
+}

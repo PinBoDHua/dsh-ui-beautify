@@ -1,0 +1,147 @@
+/*
+ * 界面美化 · Lumina —— 基础层：画布氛围、选区、滚动条、交互过渡。
+ *
+ * 规则约束（与宿主 docs/web-styling 的取向一致）：
+ *   1. 只使用三类稳定选择器 —— 元素选择器、ARIA role/状态属性、
+ *      宿主明确设置的 data-* 属性；
+ *   2. 需要覆盖宿主令牌化属性时，用 `html body` 前缀提升特异性，
+ *      不写 !important（inline 令牌本来就该由 overrideTokens 负责）；
+ *   3. CSS Module 的类名形如 `{hash}_{local}`，哈希随构建变化，
+ *      因此只在确有必要时用 `[class*='_local']` 这种与哈希无关的后缀匹配，
+ *      匹配不到时静默降级，绝不报错。
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. 页面根：把主题色透出到浏览器/窗口底色，并保住 body 背景的可预测性
+ * ------------------------------------------------------------------ */
+
+html body {
+  background-color: var(--dsw-alias-bg-base);
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. 氛围光
+ *
+ *    只挂在**侧栏列**上。这一条是踩过坑之后收紧的：
+ *
+ *    最初同时挂在框架（`[class*='_frame']`）上。框架本来被两列完全盖住，
+ *    唯一露出来的地方是 Windows 标题栏模式下中心列左上角那个
+ *    `border-radius: 16px` 的圆角 —— 而 background-image 的默认原点
+ *    （background-origin: padding-box）恰好就在内容区左上角。于是那个圆角
+ *    里露出的是光斑**最亮的那一点**，被圆角切成一块带硬边的蓝色楔形，
+ *    在浅色下非常显眼。
+ *
+ *    框架不需要氛围光：它可见的部分只有标题栏拖拽带（被 `:before` 盖住）
+ *    和上述圆角露出的区域，而那两处应当是与侧栏连续的纯色。
+ * ------------------------------------------------------------------ */
+
+html[data-dshb-ambient='on'] body [class*='_sidebarCol'] {
+  background-image: radial-gradient(
+      120% 55% at 0% 0%,
+      var(--dshb-ambient-a),
+      var(--dshb-ambient-a-fade) 70%
+    ),
+    radial-gradient(
+      120% 50% at 100% 100%,
+      var(--dshb-ambient-b),
+      var(--dshb-ambient-b-fade) 72%
+    );
+  /* radial-gradient 默认就铺满整个盒子，no-repeat 对它是空操作，
+     写出来只会让下一个人以为这里有平铺行为。 */
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. 文本选区：官方是 40% 蓝，这里改为强调色，与品牌位保持一致
+ * ------------------------------------------------------------------ */
+
+html body ::selection {
+  background-color: var(--dsw-alias-bg-document-selection);
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. 滚动条：官方 5px 无边框。这里给滑块留出 1.5px 透明边，视觉更细但
+ *    命中区域不变宽（宽度由 --dsh-scrollbar-width 决定，保持 6px）。
+ *    WebKit 路径走伪元素；Firefox 路径由 scrollbar.css 的宽细标准接管。
+ * ------------------------------------------------------------------ */
+
+html body {
+  --dsh-scrollbar-width: 6px;
+  --dsh-scrollbar-thumb-border: 1.5px;
+  --dsh-scrollbar-track-margin: 4px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. 交互过渡
+ *    只过渡「颜色类」属性 —— 布局属性加过渡会造成拖拽/折叠时的粘滞感。
+ *    尊重 prefers-reduced-motion：命中时整段失效。
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-dshb-motion='on']
+    body
+    :is(
+      button,
+      a,
+      summary,
+      input,
+      textarea,
+      select,
+      [role='button'],
+      [role='menuitem'],
+      [role='menuitemcheckbox'],
+      [role='menuitemradio'],
+      [role='option'],
+      [role='tab'],
+      [role='switch'],
+      [role='checkbox'],
+      [role='radio']
+    ) {
+    transition: background-color var(--ds-transition-duration-fast)
+        var(--ds-ease-in-out),
+      border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+      color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+      box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+      opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+  }
+
+  /* 浮层与卡片入场时给一点高度变化，避免菜单「凭空出现」 */
+  html[data-dshb-motion='on'] body [data-menu-material],
+  html[data-dshb-motion='on'] body [role='dialog'],
+  html[data-dshb-motion='on'] body [role='menu'],
+  html[data-dshb-motion='on'] body [role='listbox'] {
+    transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out),
+      transform var(--ds-transition-duration) var(--ds-ease-in-out),
+      box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. 焦点环：颜色已由 --dsw-focus-ring-color 令牌接管（随强调色走），
+ *    这里只补一点外发光，让键盘焦点在复杂卡片上更容易被找到。
+ * ------------------------------------------------------------------ */
+
+html body :focus-visible {
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. 内容区圆角
+ *
+ *    Windows 标题栏模式下，宿主把中心列左上角切成
+ *    `border-radius: var(--dsh-windows-content-radius) 0 0 0; corner-shape: round`，
+ *    那个圆角露出的正是框架底色 —— 也就是侧栏填充色。它是整块内容区视觉上
+ *    最靠外的一个圆角，必须与相邻表面（卡片、面板）用同一支笔。
+ *
+ *    宿主把该令牌声明在 frame 元素**自身**上（`[data-windows-titlebar]
+ *    .xxx_frame`，特异性 0,0,2,0），body 上的行内值只够被继承，够不着它。
+ *    因此这里用 `html body [class*='_frame']`（0,0,2,1）覆盖，取值来自插件
+ *    原语 `--dshb-content-radius`，与圆角档位联动。
+ *
+ *    宿主同时写了 `corner-shape: round`：这个角是**正圆**，不是全局的方圆形。
+ *    保持不动 —— 它是内容区最外沿的轮廓，跟随全局方圆形会让四个角与窗口
+ *    自身的圆角对不上。
+ * ------------------------------------------------------------------ */
+
+html body [class*='_frame'] {
+  --dsh-windows-content-radius: var(--dshb-content-radius);
+}

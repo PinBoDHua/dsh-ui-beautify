@@ -1,0 +1,337 @@
+/*
+ * 界面美化 · Lumina —— 设置面板样式。
+ *
+ * 类名统一用 `dshb-` 前缀的普通全局类（不是 CSS Module）：面板组件由本插件
+ * 拥有，前缀足以避免与宿主及其它插件冲突，同时也省掉一层构建期哈希。
+ *
+ * 全部颜色都读宿主令牌，因此面板会跟随浅色/深色与所选预设一起变。
+ *
+ * ## 正圆与胶囊必须写 corner-shape: round
+ * 宿主的 corner-shape.css 通过 `*,:before,:after { corner-shape: superellipse(1.5) }`
+ * 把**所有**圆角平滑成方圆形。这对卡片、输入框是想要的效果，但会把
+ * `border-radius: 50%` 的圆和 `999px` 的胶囊压变形。宿主自己的约定是：
+ * 正圆形状需在所属组件样式表里把 `corner-shape: round` 与半径声明配对。
+ * 本文件里四处圆（色板、预设色点、开关轨道、开关滑块）都遵守这一约定。
+ * 不支持 corner-shape 的引擎会忽略该声明，退化成普通圆弧 —— 正是想要的。
+ */
+
+.dshb-root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+}
+
+/* ---------------------------------------------------------------- 头部 */
+
+.dshb-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dshb-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshb-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  max-width: 46ch;
+}
+
+/* ------------------------------------------------------------ 主体容器 */
+
+.dshb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--dsw-alias-settings-card-stroke, var(--dsw-alias-border-l4));
+  border-radius: var(--dsw-radius-md);
+  background-color: var(
+    --dsw-alias-settings-card-fill,
+    var(--dsw-alias-bg-layer-2)
+  );
+  padding: 4px 16px;
+}
+
+/* 总开关关闭时整块降饱和并禁用交互，明确表达「已停用」 */
+.dshb-body-off {
+  opacity: 0.45;
+  filter: saturate(0.4);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ 行 */
+
+.dshb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.dshb-row:last-child {
+  border-bottom: 0;
+}
+
+.dshb-row-text {
+  min-width: 0;
+}
+
+.dshb-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshb-row-hint {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dshb-row-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ------------------------------------------------------------- 预设卡片 */
+
+.dshb-group {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.dshb-group-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  margin-bottom: 10px;
+}
+
+.dshb-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.dshb-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--dsw-alias-label-primary);
+  background-color: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.dshb-card:hover:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshb-card-active {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-state-business-primary) inset;
+  background-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.dshb-card:disabled {
+  cursor: default;
+}
+
+.dshb-card-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.dshb-card-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  /* 正圆：必须显式关掉宿主的 superellipse，否则会被压成方圆形 */
+  corner-shape: round;
+  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset;
+}
+
+.dshb-card-name {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.dshb-card-tagline {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* --------------------------------------------------------------- 色板 */
+
+.dshb-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dshb-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  /* 正圆：同上，宿主会给所有元素套 superellipse */
+  corner-shape: round;
+  cursor: pointer;
+  border: 0;
+  /* 面板可能在深色下，样式表按当前主题挑选明/暗两支强调色 */
+  background-color: var(--dshb-swatch-light);
+  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset;
+}
+
+body[data-ds-dark-theme] .dshb-swatch {
+  background-color: var(--dshb-swatch-dark);
+}
+
+.dshb-swatch-active {
+  box-shadow: 0 0 0 1px var(--dsw-alias-border-l4) inset,
+    0 0 0 3px var(--dsw-alias-bg-base),
+    0 0 0 5px var(--dsw-alias-state-business-primary);
+}
+
+.dshb-swatch:disabled {
+  cursor: default;
+}
+
+/* ----------------------------------------------------------- 分段选择器 */
+
+.dshb-segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--dsw-radius-sm);
+  background-color: var(--dsw-alias-bg-layer-3);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.dshb-segment {
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  border: 0;
+  border-radius: calc(var(--dsw-radius-sm) - 3px);
+  background-color: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshb-segment:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshb-segment-active,
+.dshb-segment-active:hover:not(:disabled) {
+  background-color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  box-shadow: var(--dsw-elevation-stroke, 0 0 0 0.5px var(--dsw-alias-border-l4)),
+    0 1px 3px 0 rgb(0 0 0 / 8%);
+}
+
+/* --------------------------------------------------------------- 开关 */
+
+.dshb-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+  border: 0;
+  border-radius: 999px;
+  /* 胶囊：superellipse 会让两端不再是半圆 */
+  corner-shape: round;
+  background-color: var(--dsw-alias-interactive-bg-active);
+  transition: background-color var(--ds-transition-duration-fast)
+    var(--ds-ease-in-out);
+}
+
+.dshb-switch[aria-checked='true'] {
+  background-color: var(--dsw-alias-state-business-primary);
+}
+
+.dshb-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  /* 正圆：同上 */
+  corner-shape: round;
+  background-color: var(--dsw-alias-switch-thumb);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 24%);
+  transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.dshb-switch[aria-checked='true'] .dshb-switch-thumb {
+  transform: translateX(16px);
+}
+
+/* --------------------------------------------------------------- 页脚 */
+
+.dshb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dshb-reset {
+  flex: none;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  background-color: transparent;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.dshb-reset:hover {
+  color: var(--dsw-alias-label-primary);
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 尊重系统的减少动效偏好：本插件自己的过渡也一并停掉 */
+@media (prefers-reduced-motion: reduce) {
+  .dshb-switch,
+  .dshb-switch-thumb {
+    transition: none;
+  }
+}

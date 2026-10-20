@@ -2,7 +2,7 @@
  * 界面美化 · Lumina —— 外观状态的读写与归一化。
  *
  * 状态只描述「用户选了什么」，不含任何颜色值 —— 颜色由 presets.js 从
- * 预设 + 强调色推导。这样新增一个预设只需改 presets.js，持久化格式不变。
+ * 预设 + 强调色推导。字号选择也只存档位 id，由 presets.js 解析成宿主字体阶梯。
  *
  * 持久化用 localStorage 而不是宿主 settings 命名空间，原因有两条：
  *   1. 宿主的 settings schema 由各 feature 包自己拥有，第三方插件无法向其中
@@ -20,6 +20,7 @@ export const DEFAULT_STATE = Object.freeze({
   accent: 'deepseek',
   radius: 'standard',
   corner: 'squircle',
+  typeScale: 'comfortable',
   ambient: true,
   motion: true,
   typography: true,
@@ -35,7 +36,7 @@ const BOOLEAN_KEYS = [
   'taskList',
   'glass'
 ]
-const STRING_KEYS = ['preset', 'accent', 'radius', 'corner']
+const STRING_KEYS = ['preset', 'accent', 'radius', 'corner', 'typeScale']
 
 /**
  * 把任意输入归一化成合法状态：未知键丢弃、非法值回落默认值。

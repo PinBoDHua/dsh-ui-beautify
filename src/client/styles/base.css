@@ -61,22 +61,34 @@ html body ::selection {
 /* ------------------------------------------------------------------ *
  * 4. 滚动条
  *
- *    官方是 5px 无边框、无轨道留白。插件把轨道留白改成 4px、给滑块留 1.5px
- *    透明边，于是**可见**滑块从 5px 变成 3px、而**命中区域**从官方的 5px
- *    变成 6px（宽了 1px，+20%）。
+ *    **不要覆盖 `--dsh-scrollbar-width`。**
  *
- *    上一版的注释写的是「命中区域不变宽……保持 6px」—— 那句话是错的：官方本来
- *    就不是 6px。这 1px 是有意留的（3px 的滑块已经偏细，再把命中区域收回去会
- *    明显更难抓住），但注释必须说的是事实。
+ *    官方是 5px 无边框、无轨道留白。v1.3 及以前把它改成 6px，本意是给 3px 的
+ *    细滑块留一个更宽的命中区域。那是错的 —— 这个令牌**同时参与宿主的布局**：
  *
- *    这个变量还被宿主自己消费：`markdown__MarkdownText` 的宽表格用
- *    `padding-bottom: var(--dsh-scrollbar-width, 5px)` 给横向滚动条留位，
- *    所以改它等于同时改了表格底部的留白 —— 又一处理由不去动它。
+ *      .Dc7zOa_scrollBody:has([data-conversation-composer-overlay])
+ *        > .Dc7zOa_composerSeat { right: var(--dsh-scrollbar-width) }
+ *
+ *    轨迹视图会设 `[data-conversation-composer-overlay]`，于是输入框所在座位
+ *    （`position: absolute`）的 `right` 直接由这个令牌给出。5px -> 6px 让它窄
+ *    1px，居中的输入框卡随之**左移 0.5px**：显示位置与宿主自己算出来的位置
+ *    对不上，而用户点击时命中的仍是按布局算的位置。
+ *
+ *    它还被另外两处消费：`::-webkit-scrollbar { width/height }`（全局每个滚动
+ *    容器都少 1px 内容宽，正文因此重排）与宽表格的
+ *    `padding-bottom: var(--dsh-scrollbar-width, 5px)`。
+ *
+ *    结论：保持宿主默认的 5px，**只**通过滑块自己的透明边把可见粗细收到 3px
+ *    （`background-clip: content-box` 下可见宽 = width − 2 × border）。
+ *    代价是命中区域是 5px 而不是 6px —— 这是必须付的：想加宽命中区域就得改
+ *    宽度令牌，而那个令牌是宿主的布局输入。`scripts/check.mjs` 有断言盯着这里。
+ *
+ *    轨道留白是安全的：宿主只把它用在 `::-webkit-scrollbar-track` 的
+ *    `margin-block` 上，那是滚动条自己轨道内的缩进，不改变任何内容盒。
  * ------------------------------------------------------------------ */
 
 html body {
-  --dsh-scrollbar-width: 6px;
-  --dsh-scrollbar-thumb-border: 1.5px;
+  --dsh-scrollbar-thumb-border: 1px;
   --dsh-scrollbar-track-margin: 4px;
 }
 

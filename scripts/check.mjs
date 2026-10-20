@@ -42,7 +42,7 @@ const readability = await import(
 )
 const colorMath = await import(new URL('../src/client/color.js', import.meta.url).href)
 
-const { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, buildTokens } = presets
+const { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, TYPE_SCALES, buildTokens } = presets
 const { DEFAULT_STATE, normalizeState } = state
 const {
   AA,
@@ -548,6 +548,110 @@ for (const tier of RADIUS_SCALES) {
 }
 ok(
   `圆角阶梯：${RADIUS_SCALES.length} 档全部单调、md ≤ ${RADIUS_MD_CEILING - 1}px（${RADIUS_MD_RATIONALE}）、contentRadius 对齐 lg`
+)
+
+// ------------------------------------------- 8.6 内容字号档位的设计约束
+//
+// v1.4 新增的一条轴。它的风险与圆角形状同源：**「装上插件但什么都不改」不能
+// 改变观感**。因此这里钉住三件事：
+//
+//   1. 默认档产出的排版令牌与「显式传入基准字号」逐字节一致 —— 档位是相对
+//      宿主 `--dsh-content-font-size` 的 `calc()` 偏移，偏移量为 0 时**不许**
+//      留下 `calc(… + 0px)` 这种等价但不等值的写法（那会让产物与官方有一处
+//      肉眼看不见、但 diff 里永远存在的差异）；
+//   2. 旧存档（没有 typeScale 键）必须回落到默认档，不能因为缺键产生第四种排版；
+//   3. 档位只许动排版令牌 —— 换字号绝不能顺带改掉任何一个颜色、圆角或阴影，
+//      否则「只是想字大一点」会变成换一套皮肤。
+const TYPE_BASELINE = TYPE_SCALES.find((scale) => scale.id === DEFAULT_STATE.typeScale)
+if (!TYPE_BASELINE) {
+  bad(`DEFAULT_STATE.typeScale = ${DEFAULT_STATE.typeScale} 不在 TYPE_SCALES 里`)
+}
+const typeIds = TYPE_SCALES.map((scale) => scale.id)
+if (new Set(typeIds).size !== typeIds.length) {
+  bad(`内容字号档位 id 重复：${typeIds.join(', ')}`)
+}
+for (const scale of TYPE_SCALES) {
+  if (!Number.isInteger(scale.size) || scale.size <= 0) {
+    bad(`内容字号档 ${scale.id} 的 size 不是正整数：${scale.size}`)
+  }
+}
+for (let i = 1; i < TYPE_SCALES.length; i += 1) {
+  if (!(TYPE_SCALES[i].size > TYPE_SCALES[i - 1].size)) {
+    bad(
+      `内容字号档位非严格递增：${TYPE_SCALES[i - 1].id}=${TYPE_SCALES[i - 1].size}px ` +
+        `≥ ${TYPE_SCALES[i].id}=${TYPE_SCALES[i].size}px —— 切档不会有可感知的变化`
+    )
+  }
+}
+
+/** 只用于比较的基准状态：除 `typeScale` 外全部取默认值。 */
+const baseState = { ...DEFAULT_STATE }
+
+const baselineTokens = buildTokens({ ...baseState, typeScale: TYPE_BASELINE?.id })
+const legacyTokens = buildTokens({ ...baseState, typeScale: undefined })
+const baselineKeys = Object.keys(baselineTokens).filter((name) => name.startsWith('--dsw-font-'))
+if (JSON.stringify(legacyTokens) !== JSON.stringify(baselineTokens)) {
+  bad(
+    '缺少 typeScale 的旧存档没有得到默认档的排版 —— 升级插件会悄悄改变字号'
+  )
+}
+for (const name of baselineKeys) {
+  const value = baselineTokens[name].light
+  if (/calc\([^)]*[+-]\s*0px/u.test(value)) {
+    bad(`默认档的 ${name} 里留下了零偏移 calc：${value}`)
+  }
+}
+
+// 基准档必须与 v1.3 的写法**逐字节一致**：宿主原本就是
+// `var(--dsh-content-font-size, 14px) / calc(25px + var(--dsh-content-font-delta))`。
+for (const [name, expected] of [
+  [
+    '--dsw-font-markdown-base',
+    'var(--dsh-content-font-size, 14px) / calc(25px + var(--dsh-content-font-delta)) var(--dsw-font-family)'
+  ],
+  [
+    '--dsw-font-markdown-h1',
+    '700 calc(21px + var(--dsh-content-font-delta)) / calc(32px + var(--dsh-content-font-delta)) var(--dsw-font-family)'
+  ]
+]) {
+  const actual = baselineTokens[name]?.light
+  if (actual !== expected) {
+    bad(
+      `默认字号档的 ${name} 与 v1.3 排版不逐字节一致：\n      期望 ${expected}\n      实际 ${actual}`
+    )
+  }
+}
+
+// 换字号只能改排版令牌：颜色 / 圆角 / 阴影 / 语法着色一个都不许动。
+const TYPE_NEUTRAL_PREFIXES = ['--dsw-font-']
+for (const mode of ['light', 'dark']) {
+  const reference = buildTokens({ ...baseState, typeScale: TYPE_SCALES[0].id })[
+    '--dsw-alias-bg-base'
+  ][mode]
+  for (const scale of TYPE_SCALES) {
+    const tokens = buildTokens({ ...baseState, typeScale: scale.id })
+    if (tokens['--dsw-alias-bg-base'][mode] !== reference) {
+      bad(`内容字号档 ${scale.id} 改变了画布底色（${mode}）—— 字号不该动配色`)
+    }
+  }
+}
+for (const scale of TYPE_SCALES) {
+  const tokens = buildTokens({ ...baseState, typeScale: scale.id })
+  for (const name of Object.keys(tokens)) {
+    if (TYPE_NEUTRAL_PREFIXES.some((prefix) => name.startsWith(prefix))) continue
+    const same =
+      JSON.stringify(tokens[name]) === JSON.stringify(baselineTokens[name])
+    if (!same) {
+      bad(
+        `内容字号档 ${scale.id} 改动了非排版令牌 ${name}（${JSON.stringify(tokens[name])} ≠ ` +
+          `${JSON.stringify(baselineTokens[name])}）—— 换字号不该换皮肤`
+      )
+    }
+  }
+}
+ok(
+  `内容字号：${TYPE_SCALES.length} 档严格递增（${TYPE_SCALES.map((s) => `${s.name} ${s.size}px`).join(' / ')}），` +
+    `默认档 ${TYPE_BASELINE?.id} 与 v1.3 排版逐字节一致，且只影响 ${baselineKeys.length} 个排版令牌`
 )
 
 // ------------------------------------------------- 9. 默认状态必须指向合法 id
@@ -1146,7 +1250,76 @@ for (const block of frameRules) {
   }
 }
 
-// ---- 断言 I：求解的墨色种子必须待在表面的**另一侧** ----
+// ---- 断言 I：CSS 层不得改写宿主拿来做**布局**的令牌 ----
+//
+// 这是 v1.4 修掉的一个真实缺陷，也是两套既有检查之间的盲区：
+//   · `audit-consumers.mjs` 只审计 `buildTokens()` 产出的令牌（--dsw-*）；
+//   · `.css` 里手写的 `--dsh-*` 覆盖**完全不经过** buildTokens。
+// 于是「CSS 层改了宿主的布局变量」谁都不看。
+//
+// 具体事故：base.css 把 `--dsh-scrollbar-width` 从宿主的 5px 改成 6px，本意只是
+// 让细滑块更好抓。但宿主拿它给输入框座位定右边界：
+//
+//   .Dc7zOa_scrollBody:has([data-conversation-composer-overlay])
+//     > .Dc7zOa_composerSeat { right: var(--dsh-scrollbar-width) }
+//
+// 轨迹视图会设 `[data-conversation-composer-overlay]`，于是输入框窄 1px、居中后
+// 左移 0.5px：**显示位置与点击命中位置对不上**。它还被 `::-webkit-scrollbar`
+// 的 width/height 与宽表格的 padding-bottom 消费。
+//
+// 这里用一张**显式白名单**而不是自动分析：判定「宿主是否拿某令牌做布局」需要
+// 宿主的样式表，那是维护者才有的输入（见 reference/ 的取向）。白名单要求每个
+// 条目写明理由，新增时要有人真的去想一遍。
+
+/** CSS 层允许覆盖的宿主令牌 —— 未列出的宿主令牌一律不许在 .css 里赋值。 */
+const CSS_LAYOUT_GUARD = new Map([
+  ['--dsh-scrollbar-thumb-border', '只用在滑块 border 上；配合 background-clip 收窄可见宽度，不参与布局'],
+  ['--dsh-scrollbar-thumb', '只用在滑块 background 上'],
+  ['--dsh-scrollbar-thumb-hover', '只用在滑块 hover background 上'],
+  ['--dsh-scrollbar-track-margin', '只用在 ::-webkit-scrollbar-track 的 margin-block —— 滚动条自身轨道内的缩进，不改变内容盒'],
+  ['--dsh-windows-content-radius', '只用在 frame 的 border-radius 上']
+])
+
+/** 从 .css 里找出所有「在 html/body 作用域上给宿主令牌赋值」的声明。 */
+const layoutGuardViolations = []
+const layoutGuardSeen = new Set()
+for (const [file, text] of Object.entries(css)) {
+  for (const block of leafBlocks(stripCssComments(text))) {
+    // 只关心落在 html/body 根作用域的规则：那里赋的值会**继承**给整棵子树，
+    // 是唯一能影响插件自身控件之外（即宿主布局）的作用域。
+    // 插件控件的自定义属性（.dshb-* 上）不在此列 —— 它们出不了面板。
+    const selector = block.selector
+    if (!/(?:^|,)\s*(?:html|:root|body|html\s+body)\s*(?:,|$)/u.test(selector)) continue
+    for (const raw of block.body.split(';')) {
+      const colon = raw.indexOf(':')
+      if (colon < 0) continue
+      const property = raw.slice(0, colon).trim()
+      const value = raw.slice(colon + 1).trim()
+      if (!property.startsWith('--dsh-')) continue
+      if (property.startsWith('--dshb-')) continue
+      layoutGuardSeen.add(property)
+      if (CSS_LAYOUT_GUARD.has(property)) continue
+      layoutGuardViolations.push(
+        `${file} 的 \`${selector}\` 给宿主令牌 ${property} 赋值（${value}），` +
+          `但它不在 CSS_LAYOUT_GUARD 白名单里`
+      )
+    }
+  }
+}
+if (layoutGuardViolations.length > 0) {
+  bad(
+    'CSS 层覆盖了未登记的宿主令牌 —— 宿主可能拿它做布局，改了会让插件控件之外的元素位移：\n      ' +
+      layoutGuardViolations.join('\n      ') +
+      '\n      若确认该令牌只用于颜色/圆角/阴影，请加进 scripts/check.mjs 的 CSS_LAYOUT_GUARD 并写明理由。'
+  )
+} else {
+  ok(
+    `CSS 布局护栏：${Object.keys(css).length} 个样式表的根作用域共覆盖了 ` +
+      `${layoutGuardSeen.size} 个宿主令牌（${[...layoutGuardSeen].sort().join('、')}），全部已登记且不参与宿主布局`
+  )
+}
+
+// ---- 断言 J：求解的墨色种子必须待在表面的**另一侧** ----
 //
 // 这是求解器「一次二分就够」的前提：候选解只要始终待在底色的另一侧，对比度对明度
 // 就是单调的。判据不是「种子算亮侧还是暗侧」（那是 0.4 阈值那套粗分类，
@@ -1179,7 +1352,7 @@ for (const preset of PRESETS) {
 }
 ok(`求解前提：${directionChecks} 个墨色种子全部落在所属表面的另一侧，二分搜索的单调性成立`)
 
-// ---- 断言 J：自指约束的实际余量 ----
+// ---- 断言 K：自指约束的实际余量 ----
 //
 // 强调色的自指淡染层（Tag 语气、侧边选中底、徽标底）由强调色自己派生，
 // 求解迭代两轮收敛。契约只钉了其中两支；这里把**全部**派生命中率算一遍，

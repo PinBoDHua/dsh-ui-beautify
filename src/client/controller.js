@@ -12,7 +12,7 @@
  *      整套移除，界面回到官方原样，做到「零残留」。
  */
 
-import { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, buildTokens } from './presets.js'
+import { ACCENTS, CORNER_SHAPES, PRESETS, RADIUS_SCALES, TYPE_SCALES, buildTokens } from './presets.js'
 import { DEFAULT_STATE, loadState, normalizeState, saveState } from './state.js'
 import { STYLES } from './styles.generated.js'
 
@@ -24,7 +24,8 @@ const KNOWN = {
   preset: PRESETS.map((p) => p.id),
   accent: ACCENTS.map((a) => a.id),
   radius: RADIUS_SCALES.map((r) => r.id),
-  corner: CORNER_SHAPES.map((c) => c.id)
+  corner: CORNER_SHAPES.map((c) => c.id),
+  typeScale: TYPE_SCALES.map((scale) => scale.id)
 }
 
 /**

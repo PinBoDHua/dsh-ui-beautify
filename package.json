@@ -1,7 +1,7 @@
 {
   "name": "dsh-ui-beautify",
-  "version": "1.3.0",
-  "description": "界面美化 · Lumina —— 为 DeepSeek Harness Web 界面提供主题化视觉增强：设计令牌重塑、可读性求解、语义色成套接管、圆角与排版精修、克制动效，并提供可视化外观设置面板。",
+  "version": "1.4.0",
+  "description": "界面美化 · Lumina —— 为 DeepSeek Harness Web 界面提供主题化视觉增强：设计令牌重塑、可读性求解、语义色成套接管、圆角与排版精修、可访问的键盘导航、窄屏适配与克制动效，并提供可视化外观设置面板。",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",

@@ -147,6 +147,16 @@ export const CORNER_SHAPES = [
 ]
 
 /**
+ * 正文字号缩放：只写宿主公开的字号变量，不覆盖字体阶梯或组件尺寸。
+ * 默认 14px 与宿主一致，便于延续既有外观；增大档以 2px 递进，便于阅读。
+ */
+export const TYPE_SCALES = [
+  { id: 'compact', name: '紧凑', size: 13 },
+  { id: 'comfortable', name: '舒适', size: 14 },
+  { id: 'large', name: '大字', size: 16 }
+]
+
+/**
  * 四个预设。
  *
  * `neutral` 是每个预设的「表面与墨色」骨架，明暗各一组；`shadow` 是该预设的
@@ -950,6 +960,7 @@ export function buildTokens(state) {
   const accentEntry = ACCENTS.find((a) => a.id === state.accent) ?? ACCENTS[0]
   const radius = RADIUS_SCALES.find((r) => r.id === state.radius) ?? RADIUS_SCALES[1]
   const corner = CORNER_SHAPES.find((c) => c.id === state.corner) ?? CORNER_SHAPES[1]
+  const typeScale = TYPE_SCALES.find((scale) => scale.id === state.typeScale) ?? TYPE_SCALES[1]
   const L = preset.neutral.light
   const D = preset.neutral.dark
   const SL = preset.shadow.light
@@ -1458,8 +1469,17 @@ export function buildTokens(state) {
     // Markdown 正文阶梯在宿主里是 body 上的复合令牌，行内覆盖可直达所有后代。
     // 官方基准行高 24px，中文与混排的舒适区在 25–26px；这里取 25px，
     // 并让标题阶梯同步 +1px，保持层级的相对距离不变。
-    const base = 'var(--dsh-content-font-size, 14px)'
-    const delta = 'var(--dsh-content-font-delta)'
+    const sizeOffset = typeScale.size - TYPE_SCALES[1].size
+    const offset = `${Math.abs(sizeOffset)}px`
+    const operation = sizeOffset < 0 ? '-' : '+'
+    const base =
+      sizeOffset === 0
+        ? 'var(--dsh-content-font-size, 14px)'
+        : `calc(var(--dsh-content-font-size, 14px) ${operation} ${offset})`
+    const delta =
+      sizeOffset === 0
+        ? 'var(--dsh-content-font-delta)'
+        : `calc(var(--dsh-content-font-delta) ${operation} ${offset})`
     tokens['--dsw-font-markdown-base'] = t(
       `${base} / calc(25px + ${delta}) var(--dsw-font-family)`,
       `${base} / calc(25px + ${delta}) var(--dsw-font-family)`

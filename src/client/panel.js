@@ -14,6 +14,7 @@ import {
   CORNER_SHAPES,
   PRESETS,
   RADIUS_SCALES,
+  TYPE_SCALES,
   accentSwatches,
   buildTokens
 } from './presets.js'
@@ -85,7 +86,7 @@ function Readability(props) {
   )
 }
 
-/** 与宿主开关同形的开关：role=switch + aria-checked，键盘可达。 */
+/** 与宿主开关同形的开关：role=switch + 状态与可访问名称，键盘可达。 */
 function Switch(props) {
   return h(
     'button',
@@ -93,6 +94,7 @@ function Switch(props) {
       type: 'button',
       role: 'switch',
       'aria-checked': props.checked,
+      'aria-label': props.label,
       className: 'dshb-switch',
       disabled: props.disabled,
       onClick: () => props.onChange(!props.checked)
@@ -105,15 +107,14 @@ function Switch(props) {
 function Segmented(props) {
   return h(
     'div',
-    { className: 'dshb-segmented', role: 'radiogroup', 'aria-label': props.label },
+    { className: 'dshb-segmented', role: 'group', 'aria-label': props.label },
     props.options.map((option) =>
       h(
         'button',
         {
           key: option.id,
           type: 'button',
-          role: 'radio',
-          'aria-checked': option.id === props.value,
+          'aria-pressed': option.id === props.value,
           className:
             option.id === props.value
               ? 'dshb-segment dshb-segment-active'
@@ -134,8 +135,7 @@ function PresetCard(props) {
     'button',
     {
       type: 'button',
-      role: 'radio',
-      'aria-checked': active,
+      'aria-pressed': active,
       className: active ? 'dshb-card dshb-card-active' : 'dshb-card',
       disabled,
       onClick: () => onSelect(preset.id)
@@ -170,6 +170,7 @@ export function BeautifyPanel(props) {
   React.useEffect(() => controller.subscribe(setState), [controller])
 
   const disabled = !state.enabled
+  const typographyDisabled = disabled || !state.typography
   const update = (patch) => controller.setState(patch)
   // 求解依赖当前预设，因此换预设时色板跟着更新；求解结果有缓存，代价可忽略。
   const swatches = accentSwatches(state.preset)
@@ -187,6 +188,7 @@ export function BeautifyPanel(props) {
         h('p', { className: 'dshb-subtitle' }, t('subtitle'))
       ),
       h(Switch, {
+        label: t('enabled'),
         checked: state.enabled,
         onChange: (value) => update({ enabled: value })
       })
@@ -204,7 +206,7 @@ export function BeautifyPanel(props) {
           'div',
           {
             className: 'dshb-cards',
-            role: 'radiogroup',
+            role: 'group',
             'aria-label': t('preset')
           },
           PRESETS.map((preset) =>
@@ -224,15 +226,14 @@ export function BeautifyPanel(props) {
         { title: t('accent'), hint: t('accentHint') },
         h(
           'div',
-          { className: 'dshb-swatches', role: 'radiogroup', 'aria-label': t('accent') },
+          { className: 'dshb-swatches', role: 'group', 'aria-label': t('accent') },
           // 色板画的是**求解后**的值，不是配色表里的原始值 —— 见 accentSwatches 的说明。
           // 求解依赖预设（要对预设的表面色达标），因此换预设时色板也会跟着微调。
           ACCENTS.map((accent) =>
             h('button', {
               key: accent.id,
               type: 'button',
-              role: 'radio',
-              'aria-checked': accent.id === state.accent,
+              'aria-pressed': accent.id === state.accent,
               'aria-label': accent.name,
               title: accent.name,
               disabled,
@@ -264,6 +265,18 @@ export function BeautifyPanel(props) {
 
       h(
         Row,
+        { title: t('typeScale'), hint: t('typeScaleHint') },
+        h(Segmented, {
+          label: t('typeScale'),
+          value: state.typeScale,
+          disabled: typographyDisabled,
+          options: TYPE_SCALES,
+          onChange: (id) => update({ typeScale: id })
+        })
+      ),
+
+      h(
+        Row,
         { title: t('corner'), hint: t('cornerHint') },
         h(Segmented, {
           label: t('corner'),
@@ -280,6 +293,7 @@ export function BeautifyPanel(props) {
         Row,
         { title: t('ambient'), hint: t('ambientHint') },
         h(Switch, {
+          label: t('ambient'),
           checked: state.ambient,
           disabled,
           onChange: (value) => update({ ambient: value })
@@ -290,6 +304,7 @@ export function BeautifyPanel(props) {
         Row,
         { title: t('typography'), hint: t('typographyHint') },
         h(Switch, {
+          label: t('typography'),
           checked: state.typography,
           disabled,
           onChange: (value) => update({ typography: value })
@@ -300,6 +315,7 @@ export function BeautifyPanel(props) {
         Row,
         { title: t('taskList'), hint: t('taskListHint') },
         h(Switch, {
+          label: t('taskList'),
           checked: state.taskList,
           disabled,
           onChange: (value) => update({ taskList: value })
@@ -310,6 +326,7 @@ export function BeautifyPanel(props) {
         Row,
         { title: t('glass'), hint: t('glassHint') },
         h(Switch, {
+          label: t('glass'),
           checked: state.glass,
           disabled,
           onChange: (value) => update({ glass: value })
@@ -320,6 +337,7 @@ export function BeautifyPanel(props) {
         Row,
         { title: t('motion'), hint: t('motionHint') },
         h(Switch, {
+          label: t('motion'),
           checked: state.motion,
           disabled,
           onChange: (value) => update({ motion: value })
@@ -341,6 +359,7 @@ export function BeautifyPanel(props) {
         {
           type: 'button',
           className: 'dshb-reset',
+          'aria-label': t('reset'),
           onClick: () => controller.reset()
         },
         t('reset')

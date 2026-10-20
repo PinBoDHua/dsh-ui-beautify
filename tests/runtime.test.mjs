@@ -418,6 +418,58 @@ test('圆角档位改变全部半径令牌与内容区圆角，明暗取同值',
   assert.equal(soft['--dsw-radius-md'].light, soft['--dsw-radius-md'].dark)
 })
 
+test('内容字号档位只动排版令牌，默认档与 v1.3 逐字节一致', () => {
+  const { calls, controller } = setup()
+  const initial = calls.tokens.at(-1).tokens
+  // 默认「舒适」档 = 宿主原始排版：不许出现 calc(… ± 0px)
+  assert.equal(
+    initial['--dsw-font-markdown-base'].light,
+    'var(--dsh-content-font-size, 14px) / calc(25px + var(--dsh-content-font-delta)) var(--dsw-font-family)'
+  )
+
+  controller.setState({ typeScale: 'large' })
+  const large = calls.tokens.at(-1).tokens
+  assert.ok(
+    large['--dsw-font-markdown-base'].light.includes('+ 2px'),
+    '大字档应把正文基准往上偏移 2px'
+  )
+
+  controller.setState({ typeScale: 'compact' })
+  const compact = calls.tokens.at(-1).tokens
+  assert.ok(
+    compact['--dsw-font-markdown-base'].light.includes('- 1px'),
+    '紧凑档应把正文基准往下偏移 1px'
+  )
+
+  // 换字号**只能**动排版令牌：颜色、圆角、阴影一个都不许变。
+  // 否则「我只是想要字大一点」会变成换一套皮肤。
+  const changed = Object.keys(large).filter(
+    (name) =>
+      JSON.stringify(large[name]) !== JSON.stringify(initial[name]) &&
+      !name.startsWith('--dsw-font-markdown-')
+  )
+  assert.deepEqual(changed, [], `换字号不该改动这些令牌：${changed.join(', ')}`)
+
+  // 字号轴与「内容精修」开关是**绑定**的：排版令牌整组挂在精修开关下，
+  // 关掉精修就等于把排版交还宿主 —— 字号档位因此也一并让位。
+  // 面板必须把这件事说出来（typeScaleHint 已写明），否则用户会以为是控件坏了。
+  controller.setState({ typography: false, typeScale: 'large' })
+  const noTypography = calls.tokens.at(-1).tokens
+  assert.equal(noTypography['--dsw-font-family'], undefined)
+  assert.equal(
+    noTypography['--dsw-font-markdown-base'],
+    undefined,
+    '内容精修关闭后排版整组交还宿主，字号档位不应残留'
+  )
+  // 但状态要记住用户的选择：重新打开精修，字号档位立刻回来。
+  controller.setState({ typography: true })
+  const back = calls.tokens.at(-1).tokens
+  assert.ok(
+    back['--dsw-font-markdown-base'].light.includes('+ 2px'),
+    '重新打开内容精修后，之前选的字号档位必须原样恢复'
+  )
+})
+
 test('偏好写入 localStorage，并能在下次加载时读回', () => {
   const { store, controller } = setup()
   controller.setState({ preset: 'paper', accent: 'rose', radius: 'soft' })
@@ -519,14 +571,16 @@ test('设置面板渲染出完整结构，且每个交互控件都可点', () =>
   ]) {
     assert.ok(classes.has(required), `面板缺少结构节点 ${required}`)
   }
-  // 4 预设 + 7 强调色 + 3 圆角 + 3 圆角形状 + 6 开关 + 1 重置 都应有可点元素。
+  // 4 预设 + 7 强调色 + 3 圆角 + 3 内容字号 + 3 圆角形状 + 6 开关 + 1 重置 都应有可点元素。
   // 这个数字是**精确**的：v1.2 写的是 `>= 19` 而当时实际已有 21 个，
   // 于是新增控件永远不会让它失败 —— 一条只贡献数字的断言。
-  // 现在按控件清单算：4 + 7 + 3 + 3 + 6 + 1 = 24，少一个就说明某个分组没渲染出来。
+  // 现在按控件清单算：4 + 7 + 3 + 3 + 3 + 6 + 1 = 27，少一个就说明某个分组没渲染出来。
+  // v1.4 把「内容字号」三档加了进来（+3），这个数字**必须**跟着改 ——
+  // 精确断言的意义就在这里：新增控件时它会失败，逼你回来确认清单。
   assert.equal(
     handlers.length,
-    24,
-    `可点控件应有 24 个（4 预设 + 7 强调色 + 3 圆角 + 3 圆角形状 + 6 开关 + 1 重置），实际 ${handlers.length}`
+    27,
+    `可点控件应有 27 个（4 预设 + 7 强调色 + 3 圆角 + 3 内容字号 + 3 圆角形状 + 6 开关 + 1 重置），实际 ${handlers.length}`
   )
   // 渲染函数按官方惯例不接受调用方 props（闭包持有 t），因此这里验证的是
   // 「词典缺失时回落到内置中文」这条真实路径，而不是测试自造的文案。
